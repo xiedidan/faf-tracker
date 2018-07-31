@@ -54,7 +54,7 @@ class FaF(nn.Module):
                 sources.append(x)
 
         # apply multibox head to sources
-        # permute shape to [batch_size, h, w, (class / loc) * num_anchors * num_frames]
+        # permute loc shape to [layer, batch_size, h, w, (class / loc) * num_anchors * num_frames]
         for (x, l, c) in zip(sources, self.loc, self.conf):
             loc.append(l(x).permute(0, 2, 3, 1).contiguous())
             conf.append(c(x).permute(0, 2, 3, 1).contiguous())
