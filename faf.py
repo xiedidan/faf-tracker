@@ -54,6 +54,7 @@ class FaF(nn.Module):
                 sources.append(x)
 
         # apply multibox head to sources
+        # permute shape to [batch_size, h, w, (class / loc) * num_anchors * num_frames]
         for (x, l, c) in zip(sources, self.loc, self.conf):
             loc.append(l(x).permute(0, 2, 3, 1).contiguous())
             conf.append(c(x).permute(0, 2, 3, 1).contiguous())
@@ -62,8 +63,18 @@ class FaF(nn.Module):
         conf = torch.cat([o.view(o.size(0), -1) for o in conf], 1)
 
         # TODO : output
+        if self.phase == "test":
+            pass
+        else:
+            output = (
+                loc.view(loc.size(0), -1, 4),
+                conf.view(conf.size(0), -1, 2),
+                self.anchors
+            )
+        
+        return output
 
-# base = [2-32, 2-32, 'M', 3-64, 2-64, 'M', 3-128, 2-128, 2-128, 'C', 2-256, 2-256, 2-256]
+# base = ['2-32', '2-32', 'M', '3-64', '2-64', 'M', '3-128', '2-128', '2-128', 'C', '2-256', '2-256', '2-256']
 def vgg(cfg, i=3, batch_norm=False):
     layers = []
     in_channels = i
@@ -75,7 +86,7 @@ def vgg(cfg, i=3, batch_norm=False):
         else:
             values = v.split(str="-")
             conv = values[0]
-            out_channels = values[1]
+            out_channels = int(values[1])
 
             if conv == '2':
                 conv2d = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
@@ -128,7 +139,7 @@ def multibox(vgg, extra_layers, cfg):
     
     return vgg, extra_layers, (loc_layers, conf_layers)
 
-base = [2-32, 2-32, 'M', 3-64, 2-64, 'M', 3-128, 2-128, 2-128, 'C', 2-256, 2-256, 2-256]
+base = ['2-32', '2-32', 'M', '3-64', '2-64', 'M', '3-128', '2-128', '2-128', 'C', '2-256', '2-256', '2-256']
 extras = [256, 'S', 512, 128, 'S', 256]
 mbox = [4, 6, 4]
 
