@@ -40,11 +40,16 @@ class FaF(nn.Module):
         loc = list()
         conf = list()
 
-        # apply vgg
-        for k in range(len(self.vgg)):
+        # apply vgg - go to conv4_3 relu
+        for k in range(23):
             x = self.vgg[k](x)
 
         s = self.L2Norm(x)
+        sources.append(s)
+
+        # finish vgg
+        for k in range(23, len(self.vgg)):
+            x = self.vgg[k](x)
         sources.append(s)
 
         # apply extras
@@ -59,6 +64,7 @@ class FaF(nn.Module):
             loc.append(l(x).permute(0, 2, 3, 1).contiguous())
             conf.append(c(x).permute(0, 2, 3, 1).contiguous())
 
+        # shape: [batch_size, -1]
         loc = torch.cat([o.view(o.size(0), -1) for o in loc], 1)
         conf = torch.cat([o.view(o.size(0), -1) for o in conf], 1)
 
@@ -74,7 +80,6 @@ class FaF(nn.Module):
         
         return output
 
-# base = ['2-32', '2-32', 'M', '3-64', '2-64', 'M', '3-128', '2-128', '2-128', 'C', '2-256', '2-256', '2-256']
 def vgg(cfg, i=3, batch_norm=False):
     layers = []
     in_channels = i
@@ -95,8 +100,8 @@ def vgg(cfg, i=3, batch_norm=False):
                 else:
                     layers += [conv2d, nn.ReLU(inplace=True)]
             else:
-                # Conv3d w/o padding, so temporal channel will reduce by 2
-                conv3d = nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=0)
+                # Conv3d w/o temporal padding, so temporal channel will reduce by 2
+                conv3d = nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=(0, 1, 1))
                 if batch_norm:
                     layers += [conv3d, nn.BatchNorm3d(out_channels), nn.ReLU(inplace=True)]
                 else:
@@ -104,9 +109,13 @@ def vgg(cfg, i=3, batch_norm=False):
             
             in_channels = out_channels
     
+    pool5 = nn.MaxPool2d(kernel_size=3, stride=1, padding=1)
+    conv6 = nn.Conv2d(512, 1024, kernel_size=3, padding=6, dilation=6)
+    conv7 = nn.Conv2d(1024, 1024, kernel_size=1)
+    layers += [pool5, conv6, nn.ReLU(inplace=True), conv7, nn.ReLU(inplace=True)]
+
     return layers
 
-# extras = [256, 'S', 512, 128, 'S', 256]
 def add_extras(cfg, i, batch_norm=False):
     # feature scaling extra layers
     layers = []
@@ -123,31 +132,31 @@ def add_extras(cfg, i, batch_norm=False):
     
     return layers
 
-# mbox = [4, 6, 4]
-def multibox(vgg, extra_layers, cfg):
+def multibox(vgg, extra_layers, cfg, num_frames):
     # classifiers - output detection for current frame, and predictions for next 4 frames
     loc_layers = []
     conf_layers = []
     vgg_source = [-2] # we are visiting out_channels so should point to CNN layer
 
     for k, v in enumerate(vgg_source):
-        loc_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * 4 * 5, kernel_size=3, padding=1)]
-        conf_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * 2 * 5, kernel_size=3, padding=1)]
+        loc_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * 4 * num_frames, kernel_size=3, padding=1)]
+        conf_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * 2 * num_frames, kernel_size=3, padding=1)]
     for k, v in enumerate(extra_layers[1::2], len(vgg_source)):
-        loc_layers += [nn.Conv2d(v.out_channels, cfg[k] * 4 * 5, kernel_size=3, padding=1)]
-        conf_layers += [nn.Conv2d(v.out_channels, cfg[k] * 2 * 5, kernel_size=3, padding=1)]
+        loc_layers += [nn.Conv2d(v.out_channels, cfg[k] * 4 * num_frames, kernel_size=3, padding=1)]
+        conf_layers += [nn.Conv2d(v.out_channels, cfg[k] * 2 * num_frames, kernel_size=3, padding=1)]
     
     return vgg, extra_layers, (loc_layers, conf_layers)
 
-base = ['2-32', '2-32', 'M', '3-64', '2-64', 'M', '3-128', '2-128', '2-128', 'C', '2-256', '2-256', '2-256']
-extras = [256, 'S', 512, 128, 'S', 256]
-mbox = [4, 6, 4]
+base = ['2-64', '2-64', 'M', '3-128', '2-128', 'M', '3-256', '2-256', '2-256', 'C', '2-512', '2-512', '2-512', 'M', '2-512', '2-512', '2-512']
+extras = [256, 'S', 512, 128, 'S', 256, 128, 'S', 256, 128, 256]
+mbox = [4, 6, 6, 6, 6, 4]
 
 def build_faf(phase, size=[300, 300, 5]):
     base_, extras_, head_ = multibox(
         vgg(base, 3),
-        add_extras(extras, 256),
-        mbox
+        add_extras(extras, 1024),
+        mbox,
+        size[2]
     )
 
     return FaF(phase, size, base_, extras_, head_)
