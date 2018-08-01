@@ -7,8 +7,8 @@ from layers import *
 class FaF(nn.Module):
     """ FaF is a 3D version of SSD
     By default, 5 Frames are stacked up to create 3D tensors.
-    And 2 Conv3D layers without padding are applied for temporal
-    dimension fusion. (Later fusion)
+    And 2 Conv3D layers without temporal padding are applied for
+    temporal dimension fusion. (Later fusion)
     
     Like other trackers we only have 2 classes for each anchor
     here: object and background.
@@ -18,10 +18,13 @@ class FaF(nn.Module):
         size: input size [width, height, frame]
     """
 
-    def __init__(self, phase, size, base, extras, head):
+    def __init__(self, phase, size, base, extras, head, cfg):
         super(FaF, self).__init__()
         self.phase = phase
         self.size = size
+
+        self.priorbox = PriorBox(self.cfg)
+        self.anchors = torch.Tensor(self.priorbox.forward())
 
         # FaF network
         self.vgg = nn.ModuleList(base)
@@ -151,7 +154,7 @@ base = ['2-64', '2-64', 'M', '3-128', '2-128', 'M', '3-256', '2-256', '2-256', '
 extras = [256, 'S', 512, 128, 'S', 256, 128, 'S', 256, 128, 256]
 mbox = [4, 6, 6, 6, 6, 4]
 
-def build_faf(phase, size=[300, 300, 5]):
+def build_faf(phase, size=[300, 300, 5], cfg):
     base_, extras_, head_ = multibox(
         vgg(base, 3),
         add_extras(extras, 1024),
@@ -159,4 +162,4 @@ def build_faf(phase, size=[300, 300, 5]):
         size[2]
     )
 
-    return FaF(phase, size, base_, extras_, head_)
+    return FaF(phase, size, base_, extras_, head_, cfg)
