@@ -135,7 +135,7 @@ def add_extras(cfg, i, batch_norm=False):
     
     return layers
 
-def multibox(vgg, extra_layers, cfg, num_frames):
+def multibox(vgg, extra_layers, cfg, num_frames, num_classes):
     # classifiers - output detection for current frame, and predictions for next 4 frames
     loc_layers = []
     conf_layers = []
@@ -143,10 +143,10 @@ def multibox(vgg, extra_layers, cfg, num_frames):
 
     for k, v in enumerate(vgg_source):
         loc_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * 4 * num_frames, kernel_size=3, padding=1)]
-        conf_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * 2 * num_frames, kernel_size=3, padding=1)]
+        conf_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * num_classes * num_frames, kernel_size=3, padding=1)]
     for k, v in enumerate(extra_layers[1::2], len(vgg_source)):
         loc_layers += [nn.Conv2d(v.out_channels, cfg[k] * 4 * num_frames, kernel_size=3, padding=1)]
-        conf_layers += [nn.Conv2d(v.out_channels, cfg[k] * 2 * num_frames, kernel_size=3, padding=1)]
+        conf_layers += [nn.Conv2d(v.out_channels, cfg[k] * num_classes * num_frames, kernel_size=3, padding=1)]
     
     return vgg, extra_layers, (loc_layers, conf_layers)
 
@@ -154,12 +154,13 @@ base = ['2-64', '2-64', 'M', '3-128', '2-128', 'M', '3-256', '2-256', '2-256', '
 extras = [256, 'S', 512, 128, 'S', 256, 128, 'S', 256, 128, 256]
 mbox = [4, 6, 6, 6, 6, 4]
 
-def build_faf(phase, size=[300, 300, 5], cfg):
+def build_faf(phase, size=[300, 300, 5], cfg, num_classes):
     base_, extras_, head_ = multibox(
         vgg(base, 3),
         add_extras(extras, 1024),
         mbox,
-        size[2]
+        size[2],
+        num_classes
     )
 
     return FaF(phase, size, base_, extras_, head_, cfg)

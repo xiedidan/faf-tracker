@@ -7,18 +7,19 @@ import torch.nn.functional as F
 from ..box_utils import match, log_sum_exp
 
 class MultiFrameBoxLoss(nn.Module):
-    def __init__(self, np_ratio, overlap_threshold, variance, num_frames):
+    def __init__(self, np_ratio, overlap_threshold, variance, num_frames, num_classes):
         self.threshold = overlap_threshold
         self.variance = variance
         self.neg_pos_ratio = np_ratio
         self.num_frames = num_frames
+        self.num_classes = num_classes
 
     def forward(self, predictions, targets):
         """
         Args:
             predictions: a tuple containing loc, conf and
             anchor boxes.
-                conf.shape: torch.size(batch_size, num_anchors * num_frames, 2)
+                conf.shape: torch.size(batch_size, num_anchors * num_frames, num_classes)
                 loc.shape: torch.size(batch_size, num_anchors * num_frames, 4)
                 anchor.shape: torch.size(num_anchors, 4)
 
@@ -63,7 +64,7 @@ class MultiFrameBoxLoss(nn.Module):
         loss_l = F.smooth_l1_loss(loc_pred, loc_t, size_average=False)
 
         # hard negative mining (only for Lcls)
-        flat_conf = conf_data.view(-1, 2)
+        flat_conf = conf_data.view(-1, self.num_classes)
         loss_c = log_sum_exp(flat_conf) - flat_conf.gather(1, conf_t.view(-1, 1))
 
         # we should consider frame because predictions are always harder than detection
