@@ -8,11 +8,12 @@ import torchvision
 import torchvision.transforms as transforms
 
 from tqdm import tqdm
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
+size = [300, 300]
 transform = transforms.Compose([
-    transforms.Lambda(lambda frames: [transforms.Resize([300, 300])(frame) for frame in frames]),
-    transforms.Lambda(lambda frames: torch.stack([transforms.ToTensor()(frame) for frame in frames])),
+    Resize(size=size),
+    ToTensor(),
 ])
 
 num_classes, classMapping = create_class_mapping('/home/voyager/data/ImageNet-VID/ILSVRC/Annotations/VID/val/')
@@ -40,7 +41,7 @@ trainLoader = torch.utils.data.DataLoader(
     num_workers=4
 )
 
-fig = plt.figure()
+# fig = plt.figure()
 
 print('\nReading data...')
 for samples, gts in tqdm(trainLoader):

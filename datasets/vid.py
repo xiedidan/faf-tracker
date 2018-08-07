@@ -1,9 +1,13 @@
+import torch
 from torch.utils.data import *
+import torchvision.transforms as transforms
+
 from PIL import Image
 import os
 import xml.etree.ElementTree as ET
 import multiprocessing as mp
 from multiprocessing.dummy import Pool
+
 from tqdm import tqdm
 
 dict_file = './words.txt'
@@ -45,9 +49,52 @@ def create_class_mapping(val_annotation_path='./ILSVRC/Annotations/VID/val/'):
         
     return num_classes, classDict
 
+# inplace resize transform
 class Resize(object):
     def __init__(self, size):
-        pass
+        self.size = size
+        self.image_transform = transforms.Lambda(lambda frames: [transforms.Resize(size)(frame) for frame in frames])
+
+    def __call__(self, sample):
+        images, gts = sample
+        images = self.image_transform(images)
+
+        # gt transform
+        print(gts)
+        w = gts[0][0][4]
+        h = gts[0][0][5]
+
+        w_ratio = float(self.size[0]) / w
+        h_ratio = float(self.size[1]) / h
+
+        for i in range(len(gts)):
+            gt = gts[i]
+            for j in range(len(gt)):
+                bbox = gt[j]
+                bbox = [
+                    bbox[0] * w_ratio,
+                    bbox[1] * w_ratio,
+                    bbox[2] * h_ratio,
+                    bbox[3] * h_ratio,
+                    self.size[0],
+                    self.size[1],
+                    bbox[6]
+                ]
+                gt[j] = bbox
+            gts[i] = gt
+
+        return images, gts
+
+# ToTensor wrapper
+class ToTensor(object):
+    def __init__(self):
+        self.image_transform = transforms.Lambda(lambda frames: torch.stack([transforms.ToTensor()(frame) for frame in frames]))
+
+    def __call__(self, sample):
+        images, gts = sample
+        images = self.image_transform(images)
+
+        return images, gts
 
 class VidDataset(Dataset):
     def __init__(self, root, packs, classDict, num_classes=30, phase='train', transform=None, target_transform=None, num_frames=5):
@@ -101,14 +148,12 @@ class VidDataset(Dataset):
     def __getitem__(self, index):
         if self.phase == 'train':
             sample = self.samples[index]
-            # read images with PIL
             sample = [Image.open(img_path) for img_path in sample]
-            if self.transform is not None:
-                sample = self.transform(sample)
-            
+
             gt = self.gts[index]
-            if self.target_transform is not None:
-                gt = self.target_transform(gt)
+
+            if self.transform is not None:
+                sample, gt = self.transform((sample, gt))
 
             return sample, gt
 
@@ -122,6 +167,10 @@ class VidDataset(Dataset):
             tree = ET.ElementTree(file=xml_path)
             root = tree.getroot()
 
+            # load frame size
+            width = int(root.find('size/width').text)
+            height = int(root.find('size/height').text)
+
             for obj in root.iterfind('object'):
                 # load labels
                 xmax = int(obj.find('bndbox/xmax').text)
@@ -134,7 +183,7 @@ class VidDataset(Dataset):
                 classNo = self.dict[className]
 
                 # lower-left to upper-right
-                bbox = [xmin, ymin, xmax, ymax, classNo]
+                bbox = [xmin, ymin, xmax, ymax, width, height, classNo]
                 label.append(bbox)
             labels.append(label)
         return labels
