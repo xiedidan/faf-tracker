@@ -1,7 +1,10 @@
 from torch.utils.data import *
-import Image
+from PIL import Image
 import os
 import xml.etree.ElementTree as ET
+import multiprocessing as mp
+from multiprocessing.dummy import Pool
+from tqdm import tqdm
 
 dict_file = './words.txt'
 
@@ -18,25 +21,33 @@ def load_wordnet_dict(path):
 
 # class mapping should be saved since it maybe unstable
 def create_class_mapping(val_annotation_path='./ILSVRC/Annotations/VID/val/'):
-    for seq_name in os.listdir(val_annotation_path):
+    print('\ncreating class mapping from: {}'.format(val_annotation_path))
+    seqs = os.listdir(val_annotation_path)
+    
+    num_classes = 0
+    classDict = {}
+
+    for seq_name in tqdm(seqs):
         seq_path = os.path.join(val_annotation_path, seq_name)
         frames = os.listdir(seq_path)
         frame_paths = [os.path.join(seq_path, frame) for frame in frames]
 
-        num_classes = 0
-        classDict = {}
-
         for xml_path in frame_paths:
             tree = ET.ElementTree(file=xml_path)
+            root = tree.getroot()
 
-            for obj in tree.iterfind('annotation/object'):
+            for obj in root.iterfind('object'):
                 # create wnid to classNo mapping
                 className = obj.find('name').text
-                if classDict[className] is None:
+                if classDict.get(className) is None:
                     classDict[className] = num_classes
                     num_classes += 1
         
-        return num_classes, classDict
+    return num_classes, classDict
+
+class Resize(object):
+    def __init__(self, size):
+        pass
 
 class VidDataset(Dataset):
     def __init__(self, root, packs, classDict, num_classes=30, phase='train', transform=None, target_transform=None, num_frames=5):
@@ -51,38 +62,37 @@ class VidDataset(Dataset):
         self.num_classes = num_classes
 
         if (self.phase == 'train') or (self.phase == 'val'):
-            self.image_root = os.path.join(root, '/Data/VID/', self.phase)
-            self.groundtruth_root = os.path.join(root, '/Annotations/VID/', self.phase)
+            self.image_root = os.path.join(self.root, 'Data/VID/', self.phase)
+            self.groundtruth_root = os.path.join(self.root, 'Annotations/VID/', self.phase)
 
             self.samples = []
             self.gts = []
             for pack in packs:
-                # get image samples
-                pack_path = os.path.join(self.image_root, pack)
+                print('\nlisting pack: {}'.format(pack))
+                # get samples and gts
+                image_pack_path = os.path.join(self.image_root, pack)
+                label_pack_path = os.path.join(self.groundtruth_root, pack)
+                seq = os.listdir(image_pack_path)
 
-                for seq_name in os.listdir(pack_path):
-                    seq_path = os.path.join(pack_path, seq_name)
-                    frames = os.listdir(seq_path)
-                    frame_paths = [os.path.join(seq_path, frame) for frame in frames]
+                for seq_name in tqdm(seq):
+                    image_seq_path = os.path.join(image_pack_path, seq_name)
+                    image_frames = os.listdir(image_seq_path)
+                    image_frame_paths = [os.path.join(image_seq_path, frame) for frame in image_frames]
+                    image_frame_paths.sort()
 
-                    for i in range(len(frames) - (self.num_frames - 1)):
-                        sample = frame_paths[i:i + (self.num_frames - 1)]
+                    label_seq_path = os.path.join(label_pack_path, seq_name)
+                    label_frames = os.listdir(label_seq_path)
+                    label_frame_paths = [os.path.join(label_seq_path, frame) for frame in label_frames]
+                    label_frame_paths.sort()
+
+                    labels = self.parse_groundtruth(label_frame_paths)
+
+                    for i in range(len(image_frames) - (self.num_frames - 1)):
+                        sample = image_frame_paths[i:i + self.num_frames]
                         self.samples.append(sample)
                         self.total_len += 1
-                
-                # get labels
-                pack_path = os.path.join(self.groundtruth_root, pack)
 
-                for seq_name in os.listdir(pack_path):
-                    seq_path = os.path.join(pack_path, seq_name)
-                    frames = os.listdir(seq_path)
-                    frame_paths = [os.path.join(seq_path, frame) for frame in frames]
-
-                    labels = self.parse_groundtruth(frame_paths)
-
-                    # create multi-frame gts
-                    for i in range(len(frames) - (self.num_frames - 1)):
-                        gt = labels[i:i + (self.num_frames - 1)]
+                        gt = labels[i:i + self.num_frames]
                         self.gts.append(gt)
         else:
             # TODO : test
@@ -93,7 +103,6 @@ class VidDataset(Dataset):
             sample = self.samples[index]
             # read images with PIL
             sample = [Image.open(img_path) for img_path in sample]
-
             if self.transform is not None:
                 sample = self.transform(sample)
             
@@ -108,12 +117,12 @@ class VidDataset(Dataset):
 
     def parse_groundtruth(self, paths):
         labels = []
-
         for xml_path in paths:
             label = []
             tree = ET.ElementTree(file=xml_path)
+            root = tree.getroot()
 
-            for obj in tree.iterfind('annotation/object'):
+            for obj in root.iterfind('object'):
                 # load labels
                 xmax = int(obj.find('bndbox/xmax').text)
                 xmin = int(obj.find('bndbox/xmin').text)
@@ -127,7 +136,5 @@ class VidDataset(Dataset):
                 # lower-left to upper-right
                 bbox = [xmin, ymin, xmax, ymax, classNo]
                 label.append(bbox)
-
             labels.append(label)
-        
         return labels
