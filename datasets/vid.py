@@ -3,6 +3,7 @@ from torch.utils.data import *
 import torchvision.transforms as transforms
 
 from PIL import Image
+import sys
 import os
 import xml.etree.ElementTree as ET
 import multiprocessing as mp
@@ -59,22 +60,17 @@ class Resize(object):
         images, gts = sample
         images = self.image_transform(images)
 
-        # gt transform
-        print(gts)
-        w = gts[0][0][4]
-        h = gts[0][0][5]
-
-        w_ratio = float(self.size[0]) / w
-        h_ratio = float(self.size[1]) / h
-
         for i in range(len(gts)):
             gt = gts[i]
             for j in range(len(gt)):
                 bbox = gt[j]
+                w_ratio = float(self.size[0]) / bbox[4]
+                h_ratio = float(self.size[1]) / bbox[5]
+
                 bbox = [
                     bbox[0] * w_ratio,
-                    bbox[1] * w_ratio,
-                    bbox[2] * h_ratio,
+                    bbox[1] * h_ratio,
+                    bbox[2] * w_ratio,
                     bbox[3] * h_ratio,
                     self.size[0],
                     self.size[1],
@@ -151,10 +147,9 @@ class VidDataset(Dataset):
             sample = [Image.open(img_path) for img_path in sample]
 
             gt = self.gts[index]
-
             if self.transform is not None:
                 sample, gt = self.transform((sample, gt))
-
+            
             return sample, gt
 
     def __len__(self):
@@ -185,5 +180,6 @@ class VidDataset(Dataset):
                 # lower-left to upper-right
                 bbox = [xmin, ymin, xmax, ymax, width, height, classNo]
                 label.append(bbox)
+
             labels.append(label)
         return labels
