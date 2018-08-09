@@ -55,10 +55,8 @@ class MultiFrameBoxLoss(nn.Module):
         conf_mask = conf_t > 0
 
         # Smooth L1 - Lreg
-        loc_mask = conf_mask
-            .view(batch_size, -1)
-            .unsqueeze(conf_mask.dim())
-            .expand_as(loc_data)
+        loc_mask = conf_mask.view(batch_size, -1).unsqueeze(conf_mask.dim()).expand_as(loc_data)
+        
         loc_pred = loc_data[loc_mask].view(-1, 4)
         loc_t = loc_t.view(batch_size, -1, 4)[loc_mask].view(-1, 4)
         loss_l = F.smooth_l1_loss(loc_pred, loc_t, size_average=False)
@@ -94,17 +92,12 @@ class MultiFrameBoxLoss(nn.Module):
 
         # masks for network output
         # shape: [batch_size, num_frames * num_anchors, 2]
-        pos_idx = conf_mask.view(-1, self.num_frames * num_anchors)
-            .unsqueeze(2)
-            .expand_as(conf_data)
-        neg_idx = neg_mask.view(-1, self.num_frames * num_anchors)
-            .unsqueeze(2)
-            .expand_as(conf_data)
+        pos_idx = conf_mask.view(-1, self.num_frames * num_anchors).unsqueeze(2).expand_as(conf_data)
+        neg_idx = neg_mask.view(-1, self.num_frames * num_anchors).unsqueeze(2).expand_as(conf_data)
 
         # select positive and hard negative samples from network output and target
         # shape: [batch_size, num_frames * num_anchors]
-        conf_pred = conf_data[(pos_idx + neg_idx).gt(0)]
-            .argmax(dim=conf_data.dim() - 1, keepdim=False)
+        conf_pred = conf_data[(pos_idx + neg_idx).gt(0)].argmax(dim=conf_data.dim() - 1, keepdim=False)
 
         selected_targets= conf_t.view(batch_size, -1)[(
             conf_mask.view(batch_size, -1) +

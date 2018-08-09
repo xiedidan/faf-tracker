@@ -1,4 +1,4 @@
 from .l2norm import L2Norm
-from .multibox_loss import MultiBoxLoss
+from .multi_frame_box_loss import MultiFrameBoxLoss
 
-__all__ = ['L2Norm', 'MultiBoxLoss']
+__all__ = ['L2Norm', 'MultiFrameBoxLoss']

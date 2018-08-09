@@ -35,8 +35,9 @@ class FaF(nn.Module):
         self.conf = nn.ModuleList(head[1])
 
         if phase == 'test':
-            self.softmax = nn.Softmax(dim=-1)
-            self.detect = Detect(2, 0, 200, 0.01, 0.45)
+            # self.softmax = nn.Softmax(dim=-1)
+            # self.detect = Detect(2, 0, 200, 0.01, 0.45)
+            pass
 
     def forward(self, x):
         sources = list()
@@ -154,7 +155,7 @@ base = ['2-64', '2-64', 'M', '3-128', '2-128', 'M', '3-256', '2-256', '2-256', '
 extras = [256, 'S', 512, 128, 'S', 256, 128, 'S', 256, 128, 256]
 mbox = [4, 6, 6, 6, 6, 4]
 
-def build_faf(phase, size=[300, 300, 5], cfg, num_classes):
+def build_faf(phase='train', size=[300, 300, 5], num_classes=30, cfg={}):
     base_, extras_, head_ = multibox(
         vgg(base, 3),
         add_extras(extras, 1024),

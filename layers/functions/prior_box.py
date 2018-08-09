@@ -17,7 +17,6 @@ class PriorBox(object):
         self.feature_maps = cfg['feature_maps']
         self.min_sizes = cfg['min_sizes']
         self.max_sizes = cfg['max_sizes']
-        self.steps = cfg['steps']
         self.aspect_ratios = cfg['aspect_ratios']
         self.clip = cfg['clip']
         self.version = cfg['name']
@@ -29,7 +28,8 @@ class PriorBox(object):
         mean = []
         for k, f in enumerate(self.feature_maps):
             for i, j in product(range(f), repeat=2):
-                f_k = self.image_size / self.steps[k]
+                # f_k = self.image_size / self.steps[k]
+                f_k = f
                 # unit center x,y
                 cx = (j + 0.5) / f_k
                 cy = (i + 0.5) / f_k

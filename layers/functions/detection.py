@@ -1,8 +1,8 @@
 import torch
 from torch.autograd import Function
 from ..box_utils import decode, nms
+'''
 from data import voc as cfg
-
 
 class Detect(Function):
     """At test time, Detect is the final layer of SSD.  Decode location preds,
@@ -60,3 +60,4 @@ class Detect(Function):
         _, rank = idx.sort(1)
         flt[(rank < self.top_k).unsqueeze(-1).expand_as(flt)].fill_(0)
         return output
+'''
