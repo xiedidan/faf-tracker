@@ -8,6 +8,8 @@ from ..box_utils import match, log_sum_exp
 
 class MultiFrameBoxLoss(nn.Module):
     def __init__(self, np_ratio, overlap_threshold, variance, num_frames, num_classes):
+        super(MultiFrameBoxLoss, self).__init__()
+        
         self.threshold = overlap_threshold
         self.variance = variance
         self.neg_pos_ratio = np_ratio

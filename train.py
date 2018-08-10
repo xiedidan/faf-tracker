@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
+import torch.nn.init as init
 import torchvision
 import torchvision.transforms as transforms
 
@@ -28,6 +29,7 @@ packs = [
     # 'ILSVRC2015_VID_train_0003',
     'ILSVRC2017_VID_train_0000'
 ]
+num_frames = 5
 num_classes = 30
 class_path = '../class.mapping'
 
@@ -52,9 +54,10 @@ def collate(batch):
         
         images.append(image)
         gts.append(gt)
-        
+    
+    # N, D, C, H, W
     images = torch.stack(images, 0)
-        
+            
     return images, gts
     
 def xavier(param):
@@ -74,6 +77,8 @@ parser.add_argument('--resume', '-r', action='store_true', help='resume from che
 parser.add_argument('--checkpoint', default='./checkpoint/checkpoint.pth', help='checkpoint file path')
 parser.add_argument('--root', default='/media/voyager/ssd-ext4/ILSVRC/', help='dataset root path')
 flags = parser.parse_args()
+
+print('Got flags: {}'.format(flags))
 
 use_cuda = torch.cuda.is_available()
 device = torch.device('cuda' if use_cuda else 'cpu')
@@ -97,7 +102,6 @@ else:
     with open(class_path, 'wb') as file:
         pickle.dump(data, file)
 
-print(flags)
 trainSet = VidDataset(
     root=flags.root,
     packs=packs,
@@ -131,7 +135,7 @@ valLoader = torch.utils.data.DataLoader(
 )
 
 # model
-# TODO : cfg - for prior box and (maybe) detection
+# cfg - for prior box and (maybe) detection
 cfg = {
     'min_dim': 300,
     'aspect_ratios': [
@@ -165,7 +169,13 @@ else:
     faf.loc.apply(init_weight)
     faf.conf.apply(init_weight)
 
-criterion = MultiFrameBoxLoss()
+criterion = MultiFrameBoxLoss(
+    3,
+    0.5,
+    cfg['variance'][0],
+    num_frames,
+    num_classes
+)
 optimizer = optim.SGD(
     faf.parameters(),
     lr=flags.lr,
@@ -180,11 +190,11 @@ def train(epoch):
     train_loss = 0
 
     for batch_index, (samples, gts) in enumerate(trainLoader):
-        samples, gts = samples.to(device), gts.to(device)
+        samples = samples.to(device)
 
         optimizer.zero_grad()
 
-        output = faf(images)
+        output = faf(samples)
         loss = criterion(output, gts)
 
         loss.backward()
@@ -206,7 +216,7 @@ def val(epoch):
         val_loss = 0
 
         for batch_index, (samples, gts) in enumerate(valLoader):
-            samples, gts = samples.to(device), gts.to(device)
+            samples = samples.to(device)
 
             output = faf(samples)
             loss = criterion(output, gts)
@@ -232,6 +242,6 @@ def val(epoch):
             best_loss = val_loss
 
 # ok, main loop
-for epoch in range(start_epoch, flag.end_epoch):
+for epoch in range(start_epoch, flags.end_epoch):
     train(epoch)
     val(epoch)

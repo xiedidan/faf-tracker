@@ -9,26 +9,25 @@ class FaF(nn.Module):
     By default, 5 Frames are stacked up to create 3D tensors.
     And 2 Conv3D layers without temporal padding are applied for
     temporal dimension fusion. (Later fusion)
-    
-    Like other trackers we only have 2 classes for each anchor
-    here: object and background.
 
     Args:
         phase: (stirng) can be "test" or "train"
         size: input size [width, height, frame]
     """
 
-    def __init__(self, phase, size, base, extras, head, cfg):
+    def __init__(self, phase, size, base, extras, head, cfg, num_classes=30):
         super(FaF, self).__init__()
         self.phase = phase
         self.size = size
+        self.cfg = cfg
+        self.num_classes = num_classes
 
         self.priorbox = PriorBox(self.cfg)
         self.anchors = torch.Tensor(self.priorbox.forward())
 
         # FaF network
         self.vgg = nn.ModuleList(base)
-        self.L2Norm = L2Norm(256, 2)
+        self.L2Norm = L2Norm(512, 2)
 
         self.extras = nn.ModuleList(extras)
         self.loc = nn.ModuleList(head[0])
@@ -40,12 +39,36 @@ class FaF(nn.Module):
             pass
 
     def forward(self, x):
+        self.batch_size = x.shape[0]
+        self.num_frames = x.shape[1]
+        
+        # N * D, C, H, W for Conv2D
+        x = x.view(-1, x.shape[2], x.shape[3], x.shape[4])
+        
         sources = list()
         loc = list()
         conf = list()
 
-        # apply vgg - go to conv4_3 relu
-        for k in range(23):
+        # apply vgg - go to maxpool_1
+        for k in range(5):
+            x = self.vgg[k](x)
+            
+        # conv2_1 conv
+        x = self.convertTo3D(x, 0)
+        x = self.vgg[5](x)
+        x = self.convertTo2D(x)
+        
+        # go to maxpool_2
+        for k in range(6, 10):
+            x = self.vgg[k](x)
+            
+        # conv3_1 conv - squeeze is not needed since D = 1
+        x = self.convertTo3D(x, 1)
+        x = self.vgg[10](x)
+        x = self.convertTo2D(x)
+        
+        # go to conv4_3 relu
+        for k in range(11, 23):
             x = self.vgg[k](x)
 
         s = self.L2Norm(x)
@@ -54,7 +77,7 @@ class FaF(nn.Module):
         # finish vgg
         for k in range(23, len(self.vgg)):
             x = self.vgg[k](x)
-        sources.append(s)
+        sources.append(x)
 
         # apply extras
         for k, v in enumerate(self.extras):
@@ -78,22 +101,52 @@ class FaF(nn.Module):
         else:
             output = (
                 loc.view(loc.size(0), -1, 4),
-                conf.view(conf.size(0), -1, 2),
+                conf.view(conf.size(0), -1, self.num_classes),
                 self.anchors
             )
         
         return output
+    
+    def convertTo3D(self, x, count):
+        # input shape N * D, C, H, W
+        # convert to N, C, D, H, W for Conv3D
+        shape = x.shape
+        x = x.view(
+            self.batch_size,
+            self.num_frames - count * 2,
+            shape[1],
+            shape[2],
+            shape[3]
+        )
+        x = torch.transpose(x, 1, 2)
+        
+        return x
+    
+    def convertTo2D(self, x):
+        # input shape N, C, D, H, W
+        # convert to N * D, C, H, W for Conv2D
+        x = torch.transpose(x, 1, 2)
+        shape = x.shape
+        x = x.contiguous()
+        x = x.view(
+            -1,
+            shape[2],
+            shape[3],
+            shape[4]
+        )
+        
+        return x
 
 def vgg(cfg, i=3, batch_norm=False):
     layers = []
     in_channels = i
     for v in cfg:
         if v == 'M':
-            layers += [nn.MaxPool2d(kernel_size=2, stride=1)]
+            layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
         elif v == 'C':
-            layers += [nn.MaxPool2d(kernel_size=2, stride=1, ceil_mode=True)]
+            layers += [nn.MaxPool2d(kernel_size=2, stride=2, ceil_mode=True)]
         else:
-            values = v.split(str="-")
+            values = v.split('-')
             conv = values[0]
             out_channels = int(values[1])
 
@@ -140,11 +193,12 @@ def multibox(vgg, extra_layers, cfg, num_frames, num_classes):
     # classifiers - output detection for current frame, and predictions for next 4 frames
     loc_layers = []
     conf_layers = []
-    vgg_source = [-2] # we are visiting out_channels so should point to CNN layer
+    vgg_source = [21, -2] # we are visiting out_channels so should point to CNN layer
 
     for k, v in enumerate(vgg_source):
         loc_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * 4 * num_frames, kernel_size=3, padding=1)]
         conf_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * num_classes * num_frames, kernel_size=3, padding=1)]
+        
     for k, v in enumerate(extra_layers[1::2], len(vgg_source)):
         loc_layers += [nn.Conv2d(v.out_channels, cfg[k] * 4 * num_frames, kernel_size=3, padding=1)]
         conf_layers += [nn.Conv2d(v.out_channels, cfg[k] * num_classes * num_frames, kernel_size=3, padding=1)]
@@ -164,4 +218,4 @@ def build_faf(phase='train', size=[300, 300, 5], num_classes=30, cfg={}):
         num_classes
     )
 
-    return FaF(phase, size, base_, extras_, head_, cfg)
+    return FaF(phase, size, base_, extras_, head_, cfg, num_classes)
