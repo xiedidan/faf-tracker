@@ -175,7 +175,7 @@ class VidDataset(Dataset):
             pass
 
     def __getitem__(self, index):
-        if self.phase == 'train':
+        if (self.phase == 'train') or (self.phase == 'val'):
             sample = self.samples[index]
             sample = [Image.open(img_path) for img_path in sample]
 
