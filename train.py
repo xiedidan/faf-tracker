@@ -61,7 +61,7 @@ def collate(batch):
     return images, gts
     
 def xavier(param):
-    init.xavier_uniform(param)
+    init.xavier_uniform_(param)
 
 def init_weight(m):
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv3d):

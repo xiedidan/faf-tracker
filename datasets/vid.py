@@ -8,6 +8,7 @@ import os
 import xml.etree.ElementTree as ET
 import multiprocessing as mp
 from multiprocessing.dummy import Pool
+import numpy as np
 
 from tqdm import tqdm
 
@@ -72,8 +73,6 @@ class Resize(object):
                     bbox[1] * h_ratio,
                     bbox[2] * w_ratio,
                     bbox[3] * h_ratio,
-                    self.size[0],
-                    self.size[1],
                     bbox[6]
                 ]
                 gt[j] = bbox
@@ -103,8 +102,7 @@ class VidDataset(Dataset):
 
         self.dict = classDict
         self.num_classes = num_classes
-        
-        # TODO : there's no pack in val, so val should be handled seperately
+
         if self.phase == 'train':
             self.image_root = os.path.join(self.root, 'Data/VID/', self.phase)
             self.groundtruth_root = os.path.join(self.root, 'Annotations/VID/', self.phase)
@@ -182,7 +180,10 @@ class VidDataset(Dataset):
             gt = self.gts[index]
             if self.transform is not None:
                 sample, gt = self.transform((sample, gt))
-            
+
+            gt = np.array(gt, dtype=np.float)
+            gt = torch.FloatTensor(gt)
+
             return sample, gt
 
     def __len__(self):

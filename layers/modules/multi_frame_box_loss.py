@@ -30,24 +30,28 @@ class MultiFrameBoxLoss(nn.Module):
                 (5 = loc(4) + label(1))
         """
         loc_data, conf_data, anchors = predictions
-        batch_size, num_data = loc_data.size()[:, -2]
-        num_anchors = num_data / self.num_frames
+        size = loc_data.size()
+        batch_size = size[0]
+        num_data = size[1]
+        num_anchors = num_data // self.num_frames
 
         # match anchor boxes with groundtruth boxes
         loc_t = torch.Tensor(batch_size * self.num_frames, num_anchors, 4)
         conf_t = torch.Tensor(batch_size * self.num_frames, num_anchors)
 
         for batch in range(batch_size):
-            for frame in range(num_frames):
-                truths = targets[batch][frame][:, :-1].detach()
-                labels = targets[batch][frame][:, -1].detach()
+            for frame in range(self.num_frames):
+                frame_targets = targets[batch][frame]
+                truths = frame_targets[:, :-1]
+                labels = frame_targets[:, -1]
+
                 defaults = anchors.detach()
 
                 match(
                     self.threshold,
                     truths,
                     defaults,
-                    self.variances,
+                    self.variance,
                     labels,
                     loc_t,
                     conf_t,

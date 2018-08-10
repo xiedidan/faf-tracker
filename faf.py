@@ -217,5 +217,13 @@ def build_faf(phase='train', size=[300, 300, 5], num_classes=30, cfg={}):
         size[2],
         num_classes
     )
+    print('\nvgg: ')
+    [print(ly) for ly in base_]
+    print('\nextra: ')
+    [print(extra) for extra in extras_]
+    print('\nloc head: ')
+    [print(h) for h in head_[0]]
+    print('\nconf head: ')
+    [print(h) for h in head_[1]]
 
     return FaF(phase, size, base_, extras_, head_, cfg, num_classes)
