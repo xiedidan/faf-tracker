@@ -45,7 +45,7 @@ class MultiFrameBoxLoss(nn.Module):
                 truths = frame_targets[:, :-1]
                 labels = frame_targets[:, -1]
 
-                defaults = anchors.detach()
+                defaults = anchors # .detach()
 
                 match(
                     self.threshold,
@@ -57,7 +57,7 @@ class MultiFrameBoxLoss(nn.Module):
                     conf_t,
                     batch * self.num_frames + frame
                 )
-
+                
         conf_mask = conf_t > 0
 
         # Smooth L1 - Lreg

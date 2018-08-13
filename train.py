@@ -146,7 +146,7 @@ cfg = {
         [2., 3.],
         [2.]
     ],
-    'variance': [0.1],
+    'variance': [1., 1.],
     'feature_maps': [38, 19, 10, 5, 3, 1],
     'min_sizes': [0.2, 0.2, 0.2, 0.2, 0.2, 0.2],
     'max_sizes': [0.95, 0.95, 0.95, 0.95, 0.95, 0.95],
@@ -172,7 +172,7 @@ else:
 criterion = MultiFrameBoxLoss(
     3,
     0.5,
-    cfg['variance'][0],
+    cfg['variance'],
     num_frames,
     num_classes
 )
@@ -194,8 +194,8 @@ def train(epoch):
 
         optimizer.zero_grad()
 
-        output = faf(samples)
-        loss = criterion(output, gts)
+        loc, conf, anchor = faf(samples)
+        loss = criterion((loc.to('cpu'), conf.to('cpu'), anchor), gts)
 
         loss.backward()
         optimizer.step()
@@ -212,13 +212,16 @@ def val(epoch):
     print('Val')
 
     with torch.no_grad():
-        net.eval()
+        faf.eval()
         val_loss = 0
 
         for batch_index, (samples, gts) in enumerate(valLoader):
             samples = samples.to(device)
+            gts = torch.stack([gt.to(device) for gt in gts])
 
             output = faf(samples)
+            output[2].to(device)
+ 
             loss = criterion(output, gts)
             val_loss += loss.item()
 
