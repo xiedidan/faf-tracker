@@ -195,7 +195,8 @@ def train(epoch):
         optimizer.zero_grad()
 
         loc, conf, anchor = faf(samples)
-        loss = criterion((loc.to('cpu'), conf.to('cpu'), anchor), gts)
+        loss_l, loss_c = criterion((loc.to('cpu'), conf.to('cpu'), anchor), gts)
+        loss = loss_l + loss_c
 
         loss.backward()
         optimizer.step()
