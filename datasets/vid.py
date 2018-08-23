@@ -87,8 +87,10 @@ class ToTensor(object):
 
     def __call__(self, sample):
         images, gts = sample
+        
         images = self.image_transform(images)
-
+        gts = [torch.Tensor(frame) for frame in gts]
+            
         return images, gts
 
 class VidDataset(Dataset):
@@ -176,13 +178,10 @@ class VidDataset(Dataset):
         if (self.phase == 'train') or (self.phase == 'val'):
             sample = self.samples[index]
             sample = [Image.open(img_path) for img_path in sample]
-
             gt = self.gts[index]
+
             if self.transform is not None:
                 sample, gt = self.transform((sample, gt))
-
-            gt = np.array(gt, dtype=np.float)
-            gt = torch.FloatTensor(gt)
 
             return sample, gt
 
@@ -200,6 +199,8 @@ class VidDataset(Dataset):
             width = int(root.find('size/width').text)
             height = int(root.find('size/height').text)
 
+            # if no obj exists in this frame,
+            # then create a fake obj [0, 0, 0, 0, width, height, -1]
             for obj in root.iterfind('object'):
                 # load labels
                 xmax = int(obj.find('bndbox/xmax').text)

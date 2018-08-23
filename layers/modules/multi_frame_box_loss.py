@@ -69,6 +69,7 @@ class MultiFrameBoxLoss(nn.Module):
 
         # hard negative mining (only for Lcls)
         flat_conf = conf_data.view(-1, self.num_classes)
+        conf_t = conf_t.to(torch.long)
         loss_c = log_sum_exp(flat_conf) - flat_conf.gather(1, conf_t.view(-1, 1))
 
         # we should consider frame because predictions are always harder than detection
@@ -103,12 +104,15 @@ class MultiFrameBoxLoss(nn.Module):
 
         # select positive and hard negative samples from network output and target
         # shape: [batch_size, num_frames * num_anchors]
-        conf_pred = conf_data[(pos_idx + neg_idx).gt(0)].argmax(dim=conf_data.dim() - 1, keepdim=False)
+        print(conf_data.shape, conf_data[(pos_idx + neg_idx).gt(0)].shape)
+        conf_pred = conf_data[(pos_idx + neg_idx).gt(0)].argmax(dim=-1, keepdim=False)
 
-        selected_targets= conf_t.view(batch_size, -1)[(
+        selected_targets = conf_t.view(batch_size, -1)[(
             conf_mask.view(batch_size, -1) +
             neg_mask.view(batch_size, -1)
         ).gt(0)]
+
+        print(conf_pred, selected_targets)
 
         # Lcls
         loss_c = F.binary_cross_entropy(
