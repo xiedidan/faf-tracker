@@ -43,11 +43,6 @@ class MultiFrameBoxLoss(nn.Module):
             for frame in range(self.num_frames):
                 frame_targets = targets[batch][frame]
 
-                # frame might be [], skip them???
-                if len(frame_targets) == 0:
-                    print(targets[batch])
-                    continue
-
                 truths = frame_targets[:, :-1]
                 labels = frame_targets[:, -1]
 
@@ -63,7 +58,7 @@ class MultiFrameBoxLoss(nn.Module):
                     conf_t,
                     batch * self.num_frames + frame
                 )
-                
+
         conf_mask = conf_t > 0
 
         # Smooth L1 - Lreg
@@ -76,7 +71,6 @@ class MultiFrameBoxLoss(nn.Module):
         # hard negative mining (only for Lcls)
         flat_conf = conf_data.view(-1, self.num_classes)
         conf_t = conf_t.to(torch.long)
-        print(flat_conf, conf_t)
         loss_c = log_sum_exp(flat_conf) - flat_conf.gather(1, conf_t.view(-1, 1))
 
         # we should consider frame because predictions are always harder than detection

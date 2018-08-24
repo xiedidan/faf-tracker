@@ -102,6 +102,24 @@ if __name__ == '__main__':
 
     print('num_classes: {}\nclassMapping: {}'.format(num_classes, classMapping))
 
+    if flags.snapshot:
+        # clear exited snapshots
+        sample_train_filename = os.path.join(flags.root, 'dump/', sample_prefix).format('train')
+        if os.path.exists(sample_train_filename):
+            os.remove(sample_train_filename)
+
+        gt_train_filename = os.path.join(flags.root, 'dump/', gt_prefix).format('train')
+        if os.path.exists(gt_train_filename):
+            os.remove(gt_train_filename)
+
+        sample_val_filename = os.path.join(flags.root, 'dump/', sample_prefix).format('val')
+        if os.path.exists(sample_val_filename):
+            os.remove(sample_val_filename)
+
+        gt_val_filename = os.path.join(flags.root, 'dump/', gt_prefix).format('val')
+        if os.path.exists(gt_val_filename):
+            os.remove(gt_val_filename)
+
     # data
     trainSet = VidDataset(
         root=flags.root,
@@ -129,7 +147,7 @@ if __name__ == '__main__':
         collate_fn=collate,
     )
 
-    print('Dumping groundtruth snapshots...')
+    print('Dumping snapshots...')
 
     # snapshot
     if flags.snapshot:

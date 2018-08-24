@@ -30,7 +30,7 @@ packs = [
     'ILSVRC2017_VID_train_0000'
 ]
 num_frames = 5
-num_classes = 30
+num_classes = 31
 class_filename = 'class.mapping'
 number_workers = 4
 
@@ -64,12 +64,13 @@ def init_weight(m):
 
 # argparser
 parser = argparse.ArgumentParser(description='FaF Training')
-parser.add_argument('--lr', default=1e-3, type=float, help='learning rate')
+parser.add_argument('--lr', default=1e-6, type=float, help='learning rate')
 parser.add_argument('--end_epoch', default=200, type=float, help='epcoh to stop training')
-parser.add_argument('--batch_size', default=4, help='batch size')
+parser.add_argument('--batch_size', default=4, type=int, help='batch size')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 parser.add_argument('--checkpoint', default='./checkpoint/checkpoint.pth', help='checkpoint file path')
 parser.add_argument('--root', default='/media/voyager/ssd-ext4/ILSVRC/', help='dataset root path')
+parser.add_argument('--device', default='cuda:0', help='device (cuda / cpu)')
 flags = parser.parse_args()
 
 print('Got flags: {}'.format(flags))
@@ -77,13 +78,13 @@ print('Got flags: {}'.format(flags))
 if not os.path.exists(os.path.join(flags.root, 'dump/')):
     os.mkdir(os.path.join(flags.root, 'dump/'))
 
-use_cuda = torch.cuda.is_available()
-device = torch.device('cuda' if use_cuda else 'cpu')
+device = torch.device(flags.device)
 
 # data loader
 size = [300, 300]
 transform = transforms.Compose([
     Resize(size=size),
+    Percentage(size=size),
     ToTensor(),
 ])
 
@@ -97,6 +98,8 @@ if file_exists(class_path) == True:
         num_classes, classMapping = data['num_classes'], data['classMapping']
 else:
     num_classes, classMapping = create_class_mapping(os.path.join(flags.root, 'Annotations/VID/val/'))
+
+print('num_classes: {}\nclassMapping: {}'.format(num_classes, classMapping))
 
 trainSet = VidDataset(
     root=flags.root,
@@ -192,17 +195,18 @@ def train(epoch):
 
         loc, conf, anchor = faf(samples)
         loss_l, loss_c = criterion((loc.to('cpu'), conf.to('cpu'), anchor), gts)
-        print(loss_l.item(), loss_c.item())
         loss = loss_l + loss_c
 
         loss.backward()
         optimizer.step()
 
         train_loss += loss.item()
-        print('Epoch: {}, batch: {}, Sample loss: {}, batch avg loss: {}'.format(
+        print('e:{:0>5}, b:{:0>5}, b_l:{:.5f} = l{:.5f} + c{:.5f}, e_l:{:.5f}'.format(
             epoch,
             batch_index,
             loss.item(),
+            loss_l.item(),
+            loss_c.item(),
             train_loss / (batch_index + 1)
         ))
 
@@ -243,6 +247,7 @@ def val(epoch):
             best_loss = val_loss
 
 # ok, main loop
-for epoch in range(start_epoch, flags.end_epoch):
-    train(epoch)
-    val(epoch)
+if __name__ == '__main__':
+    for epoch in range(start_epoch, flags.end_epoch):
+        train(epoch)
+        val(epoch)

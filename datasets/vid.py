@@ -39,8 +39,8 @@ def create_class_mapping(val_annotation_path='./ILSVRC/Annotations/VID/val/'):
     print('\ncreating class mapping from: {}'.format(val_annotation_path))
     seqs = os.listdir(val_annotation_path)
     
-    num_classes = 0
-    classDict = {}
+    num_classes = 1
+    classDict = {'background': 0}
 
     for seq_name in tqdm(seqs):
         seq_path = os.path.join(val_annotation_path, seq_name)
@@ -66,7 +66,7 @@ class Resize(object):
         self.size = size
         self.image_transform = transforms.Lambda(lambda frames: [transforms.Resize(size)(frame) for frame in frames])
 
-    def __call__(self, sample):
+    def __call__(self, sample, w, h):
         images, gts = sample
         images = self.image_transform(images)
 
@@ -74,18 +74,43 @@ class Resize(object):
             gt = gts[i]
             for j in range(len(gt)):
                 bbox = gt[j]
-                w_ratio = float(self.size[0]) / bbox[4]
-                h_ratio = float(self.size[1]) / bbox[5]
+                if len(bbox) < 6:
+                    print(bbox)
+
+                w_ratio = float(self.size[0]) / w
+                h_ratio = float(self.size[1]) / h
 
                 bbox = [
                     bbox[0] * w_ratio,
                     bbox[1] * h_ratio,
                     bbox[2] * w_ratio,
                     bbox[3] * h_ratio,
-                    bbox[6]
+                    bbox[4]
                 ]
                 gt[j] = bbox
             gts[i] = gt
+
+        return images, gts
+
+# inplace convert gt to percentage format
+class Percentage(object):
+    def __init__(self, size):
+        self.size = size
+
+    def __call__(self, sample):
+        images, gts = sample
+
+        for frame_index, frame in enumerate(gts):
+            for bbox_index, bbox in enumerate(frame):
+                bbox = [
+                    bbox[0] / self.size[0],
+                    bbox[1] / self.size[1],
+                    bbox[2] / self.size[0],
+                    bbox[3] / self.size[1],
+                    bbox[4]
+                ]
+                
+                gts[frame_index][bbox_index] = bbox
 
         return images, gts
 
@@ -103,7 +128,7 @@ class ToTensor(object):
         return images, gts
 
 class VidDataset(Dataset):
-    def __init__(self, root, packs, classDict, num_classes=30, phase='train', transform=None, target_transform=None, num_frames=5):
+    def __init__(self, root, packs, classDict, num_classes=31, phase='train', transform=None, target_transform=None, num_frames=5):
         self.root = root
         self.phase = phase
         self.transform = transform
@@ -122,31 +147,31 @@ class VidDataset(Dataset):
             self.gts = []
 
             sample_dump_file = os.path.join(self.root, 'dump/sample.{}.dump').format(self.phase)
+            gt_dump_file = os.path.join(self.root, 'dump/gt.{}.dump').format(self.phase)
             if file_exists(sample_dump_file):
                 with open(sample_dump_file, 'rb') as file:
                     self.samples = pickle.load(file)
                     self.total_len = len(self.samples)
 
-            gt_dump_file = os.path.join(self.root, 'dump/gt.{}.dump').format(self.phase)
-            if file_exists(gt_dump_file):
                 with open(gt_dump_file, 'rb') as file:
                     self.gts = pickle.load(file)
 
-            for pack in packs:
-                print('\nlisting pack: {}'.format(pack))
-                # get samples and gts
-                image_pack_path = os.path.join(self.image_root, pack)
-                label_pack_path = os.path.join(self.groundtruth_root, pack)
-                seq = os.listdir(image_pack_path)
+            if not file_exists(sample_dump_file):
+                for pack in packs:
+                    print('\nlisting pack: {}'.format(pack))
+                    # get samples and gts
+                    image_pack_path = os.path.join(self.image_root, pack)
+                    label_pack_path = os.path.join(self.groundtruth_root, pack)
+                    seq = os.listdir(image_pack_path)
 
-                for seq_name in tqdm(seq):
-                    if not file_exists(sample_dump_file):
+                    for seq_name in tqdm(seq):
                         image_seq_path = os.path.join(image_pack_path, seq_name)
                         image_frames = os.listdir(image_seq_path)
                         image_frame_paths = [os.path.join(image_seq_path, frame) for frame in image_frames]
                         image_frame_paths.sort()
 
-                    if not file_exists(gt_dump_file):
+                        # TODO : read w, h from first frame of this seq
+
                         label_seq_path = os.path.join(label_pack_path, seq_name)
                         label_frames = os.listdir(label_seq_path)
                         label_frame_paths = [os.path.join(label_seq_path, frame) for frame in label_frames]
@@ -154,15 +179,13 @@ class VidDataset(Dataset):
 
                         labels = self.parse_groundtruth(label_frame_paths)
 
-                    if not file_exists(sample_dump_file):
                         for i in range(len(image_frames) - (self.num_frames - 1)):
                             sample = image_frame_paths[i:i + self.num_frames]
                             self.samples.append(sample)
                             self.total_len += 1
 
-                            if not file_exists(gt_dump_file):
-                                gt = labels[i:i + self.num_frames]
-                                self.gts.append(gt)
+                            gt = labels[i:i + self.num_frames]
+                            self.gts.append(gt)
                         
         elif self.phase == 'val':
             self.image_root = os.path.join(self.root, 'Data/VID/', self.phase)
@@ -228,36 +251,34 @@ class VidDataset(Dataset):
     def __len__(self):
         return self.total_len
 
-    def parse_groundtruth(self, paths):
-        labels = []
-        for xml_path in paths:
-            label = []
-            tree = ET.ElementTree(file=xml_path)
-            root = tree.getroot()
+    def parse_groundtruth(self, xml_path, width, height):
+        label = []
+        tree = ET.ElementTree(file=xml_path)
+        root = tree.getroot()
 
-            # load frame size
-            width = int(root.find('size/width').text)
-            height = int(root.find('size/height').text)
+        for obj in root.iterfind('object'):
+            # load labels
+            xmax = int(obj.find('bndbox/xmax').text)
+            xmin = int(obj.find('bndbox/xmin').text)
+            ymax = int(obj.find('bndbox/ymax').text)
+            ymin = int(obj.find('bndbox/ymin').text)
 
-            # if no obj exists in this frame,
-            # then create a fake obj [0, 0, 0, 0, width, height, -1]
-            for obj in root.iterfind('object'):
-                # load labels
-                xmax = int(obj.find('bndbox/xmax').text)
-                xmin = int(obj.find('bndbox/xmin').text)
-                ymax = int(obj.find('bndbox/ymax').text)
-                ymin = int(obj.find('bndbox/ymin').text)
+            # load class number
+            className = obj.find('name').text
+            classNo = self.dict[className]
+            if classNo == 31:
+                print(className, classNo)
 
-                # load class number
-                className = obj.find('name').text
-                classNo = self.dict[className]
+            # lower-left to upper-right
+            bbox = [xmin, ymin, xmax, ymax, classNo]
+            label.append(bbox)
 
-                # lower-left to upper-right
-                bbox = [xmin, ymin, xmax, ymax, width, height, classNo]
-                label.append(bbox)
+        # if no obj exists in this frame,
+        # then we have a background label
+        if len(label) == 0:
+            label.append([0, 0, width, height, 0])
 
-            labels.append(label)
-        return labels
+        return label
 
     def get_sample(self):
         return self.samples
