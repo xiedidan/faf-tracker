@@ -5,6 +5,7 @@ import torchvision.transforms as transforms
 from PIL import Image
 import sys
 import os
+import pickle
 import xml.etree.ElementTree as ET
 import multiprocessing as mp
 from multiprocessing.dummy import Pool
@@ -13,6 +14,14 @@ import numpy as np
 from tqdm import tqdm
 
 dict_file = './words.txt'
+
+# helper
+def file_exists(path):
+    try:
+        with open(path) as f:
+            return True
+    except IOError:
+        return False
 
 def load_wordnet_dict(path):
     with open(path) as file:
@@ -111,6 +120,18 @@ class VidDataset(Dataset):
 
             self.samples = []
             self.gts = []
+
+            sample_dump_file = os.path.join(self.root, 'dump/sample.{}.dump').format(self.phase)
+            if file_exists(sample_dump_file):
+                with open(sample_dump_file, 'rb') as file:
+                    self.samples = pickle.load(file)
+                    self.total_len = len(self.samples)
+
+            gt_dump_file = os.path.join(self.root, 'dump/gt.{}.dump').format(self.phase)
+            if file_exists(gt_dump_file):
+                with open(gt_dump_file, 'rb') as file:
+                    self.gts = pickle.load(file)
+
             for pack in packs:
                 print('\nlisting pack: {}'.format(pack))
                 # get samples and gts
@@ -119,25 +140,29 @@ class VidDataset(Dataset):
                 seq = os.listdir(image_pack_path)
 
                 for seq_name in tqdm(seq):
-                    image_seq_path = os.path.join(image_pack_path, seq_name)
-                    image_frames = os.listdir(image_seq_path)
-                    image_frame_paths = [os.path.join(image_seq_path, frame) for frame in image_frames]
-                    image_frame_paths.sort()
+                    if not file_exists(sample_dump_file):
+                        image_seq_path = os.path.join(image_pack_path, seq_name)
+                        image_frames = os.listdir(image_seq_path)
+                        image_frame_paths = [os.path.join(image_seq_path, frame) for frame in image_frames]
+                        image_frame_paths.sort()
 
-                    label_seq_path = os.path.join(label_pack_path, seq_name)
-                    label_frames = os.listdir(label_seq_path)
-                    label_frame_paths = [os.path.join(label_seq_path, frame) for frame in label_frames]
-                    label_frame_paths.sort()
+                    if not file_exists(gt_dump_file):
+                        label_seq_path = os.path.join(label_pack_path, seq_name)
+                        label_frames = os.listdir(label_seq_path)
+                        label_frame_paths = [os.path.join(label_seq_path, frame) for frame in label_frames]
+                        label_frame_paths.sort()
 
-                    labels = self.parse_groundtruth(label_frame_paths)
+                        labels = self.parse_groundtruth(label_frame_paths)
 
-                    for i in range(len(image_frames) - (self.num_frames - 1)):
-                        sample = image_frame_paths[i:i + self.num_frames]
-                        self.samples.append(sample)
-                        self.total_len += 1
+                    if not file_exists(sample_dump_file):
+                        for i in range(len(image_frames) - (self.num_frames - 1)):
+                            sample = image_frame_paths[i:i + self.num_frames]
+                            self.samples.append(sample)
+                            self.total_len += 1
 
-                        gt = labels[i:i + self.num_frames]
-                        self.gts.append(gt)
+                            if not file_exists(gt_dump_file):
+                                gt = labels[i:i + self.num_frames]
+                                self.gts.append(gt)
                         
         elif self.phase == 'val':
             self.image_root = os.path.join(self.root, 'Data/VID/', self.phase)
@@ -146,30 +171,45 @@ class VidDataset(Dataset):
             self.samples = []
             self.gts = []
 
+            sample_dump_file = os.path.join(self.root, 'dump/sample.{}.dump').format(self.phase)
+            if file_exists(sample_dump_file):
+                with open(sample_dump_file, 'rb') as file:
+                    self.samples = pickle.load(file)
+                    self.total_len = len(self.samples)
+
+            gt_dump_file = os.path.join(self.root, 'dump/gt.{}.dump').format(self.phase)
+            if file_exists(gt_dump_file):
+                with open(gt_dump_file, 'rb') as file:
+                    self.gts = pickle.load(file)
+
             print('\nlisting val')
             # get samples and gts
             seq = os.listdir(self.image_root)
 
             for seq_name in tqdm(seq):
-                image_seq_path = os.path.join(self.image_root, seq_name)
-                image_frames = os.listdir(image_seq_path)
-                image_frame_paths = [os.path.join(image_seq_path, frame) for frame in image_frames]
-                image_frame_paths.sort()
+                if not file_exists(sample_dump_file):
+                    image_seq_path = os.path.join(self.image_root, seq_name)
+                    image_frames = os.listdir(image_seq_path)
+                    image_frame_paths = [os.path.join(image_seq_path, frame) for frame in image_frames]
+                    image_frame_paths.sort()
 
-                label_seq_path = os.path.join(self.groundtruth_root, seq_name)
-                label_frames = os.listdir(label_seq_path)
-                label_frame_paths = [os.path.join(label_seq_path, frame) for frame in label_frames]
-                label_frame_paths.sort()
+                if not file_exists(gt_dump_file):
+                    label_seq_path = os.path.join(self.groundtruth_root, seq_name)
+                    label_frames = os.listdir(label_seq_path)
+                    label_frame_paths = [os.path.join(label_seq_path, frame) for frame in label_frames]
+                    label_frame_paths.sort()
 
-                labels = self.parse_groundtruth(label_frame_paths)
+                    labels = self.parse_groundtruth(label_frame_paths)
 
-                for i in range(len(image_frames) - (self.num_frames - 1)):
-                    sample = image_frame_paths[i:i + self.num_frames]
-                    self.samples.append(sample)
-                    self.total_len += 1
+                if not file_exists(sample_dump_file):
+                    for i in range(len(image_frames) - (self.num_frames - 1)):
+                        sample = image_frame_paths[i:i + self.num_frames]
+                        self.samples.append(sample)
+                        self.total_len += 1
 
-                    gt = labels[i:i + self.num_frames]
-                    self.gts.append(gt)
+                        if not file_exists(gt_dump_file):
+                            gt = labels[i:i + self.num_frames]
+                            self.gts.append(gt)
         else:
             # TODO : test
             pass
@@ -218,3 +258,9 @@ class VidDataset(Dataset):
 
             labels.append(label)
         return labels
+
+    def get_sample(self):
+        return self.samples
+
+    def get_groundtruth(self):
+        return self.gts

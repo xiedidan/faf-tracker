@@ -23,28 +23,22 @@ from layers import MultiFrameBoxLoss
 
 # constants & configs
 packs = [
-    # 'ILSVRC2015_VID_train_0000',
-    # 'ILSVRC2015_VID_train_0001',
-    # 'ILSVRC2015_VID_train_0002',
-    # 'ILSVRC2015_VID_train_0003',
+    'ILSVRC2015_VID_train_0000',
+    'ILSVRC2015_VID_train_0001',
+    'ILSVRC2015_VID_train_0002',
+    'ILSVRC2015_VID_train_0003',
     'ILSVRC2017_VID_train_0000'
 ]
 num_frames = 5
 num_classes = 30
-class_path = '../class.mapping'
-
-start_epoch = 0
-best_loss = float('inf')
+class_filename = 'class.mapping'
 number_workers = 4
 
-# helper functions
-def file_exists(path):
-    try:
-        with open(path) as f:
-            return True
-    except IOError:
-        return False
+# variables
+start_epoch = 0
+best_loss = float('inf')
 
+# helper functions
 def collate(batch):
     # batch = [(image, gt), (image, gt), ...]
     images = []
@@ -80,6 +74,9 @@ flags = parser.parse_args()
 
 print('Got flags: {}'.format(flags))
 
+if not os.path.exists(os.path.join(flags.root, 'dump/')):
+    os.mkdir(os.path.join(flags.root, 'dump/'))
+
 use_cuda = torch.cuda.is_available()
 device = torch.device('cuda' if use_cuda else 'cpu')
 
@@ -92,15 +89,14 @@ transform = transforms.Compose([
 
 # load or create class mapping
 # remember to clear mapping before switching data set
+class_path = os.path.join(flags.root, 'dump/', class_filename)
+
 if file_exists(class_path) == True:
     with open(class_path, 'rb') as file:
         data = pickle.load(file)
         num_classes, classMapping = data['num_classes'], data['classMapping']
 else:
-    num_classes, classMapping = create_class_mapping('/media/voyager/ssd-ext4/ILSVRC/Annotations/VID/val/')
-    data = {'num_classes': num_classes, 'classMapping': classMapping}
-    with open(class_path, 'wb') as file:
-        pickle.dump(data, file)
+    num_classes, classMapping = create_class_mapping(os.path.join(flags.root, 'Annotations/VID/val/'))
 
 trainSet = VidDataset(
     root=flags.root,
@@ -196,6 +192,7 @@ def train(epoch):
 
         loc, conf, anchor = faf(samples)
         loss_l, loss_c = criterion((loc.to('cpu'), conf.to('cpu'), anchor), gts)
+        print(loss_l.item(), loss_c.item())
         loss = loss_l + loss_c
 
         loss.backward()
