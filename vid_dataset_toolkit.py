@@ -108,17 +108,9 @@ if __name__ == '__main__':
         if os.path.exists(sample_train_filename):
             os.remove(sample_train_filename)
 
-        gt_train_filename = os.path.join(flags.root, 'dump/', gt_prefix).format('train')
-        if os.path.exists(gt_train_filename):
-            os.remove(gt_train_filename)
-
         sample_val_filename = os.path.join(flags.root, 'dump/', sample_prefix).format('val')
         if os.path.exists(sample_val_filename):
             os.remove(sample_val_filename)
-
-        gt_val_filename = os.path.join(flags.root, 'dump/', gt_prefix).format('val')
-        if os.path.exists(gt_val_filename):
-            os.remove(gt_val_filename)
 
     # data
     trainSet = VidDataset(
@@ -153,13 +145,8 @@ if __name__ == '__main__':
     if flags.snapshot:
         train_samples = trainSet.get_sample()
         serialize(os.path.join(flags.root, 'dump/', sample_prefix).format('train'), train_samples)
-        train_gts = trainSet.get_groundtruth()
-        serialize(os.path.join(flags.root, 'dump/', gt_prefix).format('train'), train_gts)
-
         val_samples = valSet.get_sample()
         serialize(os.path.join(flags.root, 'dump/', sample_prefix).format('val'), val_samples)
-        val_gts = valSet.get_groundtruth()
-        serialize(os.path.join(flags.root, 'dump/', gt_prefix).format('val'), val_gts)
 
     # plot
     print('Plotting batches...')

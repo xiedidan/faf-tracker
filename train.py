@@ -32,7 +32,7 @@ packs = [
 num_frames = 5
 num_classes = 31
 class_filename = 'class.mapping'
-number_workers = 4
+number_workers = 0
 
 # variables
 start_epoch = 0
@@ -44,7 +44,7 @@ def collate(batch):
     images = []
     gts = []
     for i, sample in enumerate(batch):
-        image, gt = sample
+        image, gt, w, h = sample
         
         images.append(image)
         gts.append(gt)
@@ -82,7 +82,7 @@ device = torch.device(flags.device)
 
 # data loader
 size = [300, 300]
-transform = transforms.Compose([
+transform = Compose([
     Resize(size=size),
     Percentage(size=size),
     ToTensor(),
@@ -183,7 +183,7 @@ optimizer = optim.SGD(
 )
 
 def train(epoch):
-    print('Training Epoch: {}'.format(epoch))
+    print('\nTraining Epoch: {}'.format(epoch))
 
     faf.train()
     train_loss = 0
@@ -211,7 +211,7 @@ def train(epoch):
         ))
 
 def val(epoch):
-    print('Val')
+    print('\nVal')
 
     with torch.no_grad():
         faf.eval()
@@ -240,7 +240,7 @@ def val(epoch):
             
             if not os.path.isdir('checkpoint'):
                 os.mkdir('checkpoint')
-            torch.save(state, './checkpoint/epoch_{}_loss_{}.pth'.format(
+            torch.save(state, './checkpoint/epoch_{:0>5}_loss_{:.5f}.pth'.format(
                 epoch,
                 val_loss
             ))

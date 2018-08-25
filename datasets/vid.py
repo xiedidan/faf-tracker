@@ -35,6 +35,7 @@ def load_wordnet_dict(path):
         return wordnet_dict
 
 # class mapping should be saved since it maybe unstable
+# we have a background class by default
 def create_class_mapping(val_annotation_path='./ILSVRC/Annotations/VID/val/'):
     print('\ncreating class mapping from: {}'.format(val_annotation_path))
     seqs = os.listdir(val_annotation_path)
@@ -60,22 +61,49 @@ def create_class_mapping(val_annotation_path='./ILSVRC/Annotations/VID/val/'):
         
     return num_classes, classDict
 
+# mod from torchvision
+class Compose(object):
+    """Composes several transforms together.
+
+    Args:
+        transforms (list of ``Transform`` objects): list of transforms to compose.
+
+    Example:
+        >>> transforms.Compose([
+        >>>     transforms.CenterCrop(10),
+        >>>     transforms.ToTensor(),
+        >>> ])
+    """
+
+    def __init__(self, transforms):
+        self.transforms = transforms
+
+    def __call__(self, images, gts, w, h):
+        for t in self.transforms:
+            images, gts, w, h = t(images, gts, w, h)
+        return images, gts, w, h
+
+    def __repr__(self):
+        format_string = self.__class__.__name__ + '('
+        for t in self.transforms:
+            format_string += '\n'
+            format_string += '    {0}'.format(t)
+        format_string += '\n)'
+        return format_string
+
 # inplace resize transform
 class Resize(object):
     def __init__(self, size):
         self.size = size
         self.image_transform = transforms.Lambda(lambda frames: [transforms.Resize(size)(frame) for frame in frames])
 
-    def __call__(self, sample, w, h):
-        images, gts = sample
+    def __call__(self, images, gts, w, h):
         images = self.image_transform(images)
 
         for i in range(len(gts)):
             gt = gts[i]
             for j in range(len(gt)):
                 bbox = gt[j]
-                if len(bbox) < 6:
-                    print(bbox)
 
                 w_ratio = float(self.size[0]) / w
                 h_ratio = float(self.size[1]) / h
@@ -90,16 +118,14 @@ class Resize(object):
                 gt[j] = bbox
             gts[i] = gt
 
-        return images, gts
+        return images, gts, w, h
 
 # inplace convert gt to percentage format
 class Percentage(object):
     def __init__(self, size):
         self.size = size
 
-    def __call__(self, sample):
-        images, gts = sample
-
+    def __call__(self, images, gts, w, h):
         for frame_index, frame in enumerate(gts):
             for bbox_index, bbox in enumerate(frame):
                 bbox = [
@@ -112,20 +138,19 @@ class Percentage(object):
                 
                 gts[frame_index][bbox_index] = bbox
 
-        return images, gts
+        return images, gts, w, h
 
 # ToTensor wrapper
 class ToTensor(object):
     def __init__(self):
         self.image_transform = transforms.Lambda(lambda frames: torch.stack([transforms.ToTensor()(frame) for frame in frames]))
 
-    def __call__(self, sample):
-        images, gts = sample
-        
+    def __call__(self, images, gts, w, h):
+        # TODO : image channel swapping?
         images = self.image_transform(images)
         gts = [torch.Tensor(frame) for frame in gts]
             
-        return images, gts
+        return images, gts, w, h
 
 class VidDataset(Dataset):
     def __init__(self, root, packs, classDict, num_classes=31, phase='train', transform=None, target_transform=None, num_frames=5):
@@ -139,114 +164,102 @@ class VidDataset(Dataset):
         self.dict = classDict
         self.num_classes = num_classes
 
-        if self.phase == 'train':
-            self.image_root = os.path.join(self.root, 'Data/VID/', self.phase)
-            self.groundtruth_root = os.path.join(self.root, 'Annotations/VID/', self.phase)
+        self.image_root = os.path.join(self.root, 'Data/VID/', self.phase)
+        self.groundtruth_root = os.path.join(self.root, 'Annotations/VID/', self.phase)
 
-            self.samples = []
-            self.gts = []
+        self.samples = []
 
-            sample_dump_file = os.path.join(self.root, 'dump/sample.{}.dump').format(self.phase)
-            gt_dump_file = os.path.join(self.root, 'dump/gt.{}.dump').format(self.phase)
-            if file_exists(sample_dump_file):
-                with open(sample_dump_file, 'rb') as file:
-                    self.samples = pickle.load(file)
-                    self.total_len = len(self.samples)
+        # load dump sample file if it exists
+        sample_dump_file = os.path.join(self.root, 'dump/sample.{}.dump').format(self.phase)
 
-                with open(gt_dump_file, 'rb') as file:
-                    self.gts = pickle.load(file)
+        if file_exists(sample_dump_file):
+            print('\nloading {} sample dump'.format(self.phase))
+            with open(sample_dump_file, 'rb') as file:
+                self.samples = pickle.load(file)
+                self.total_len = len(self.samples)
+        elif self.phase == 'train':
+            for pack in packs:
+                print('\nlisting pack: {}'.format(pack))
+                # get samples and gts
+                image_pack_path = os.path.join(self.image_root, pack)
+                label_pack_path = os.path.join(self.groundtruth_root, pack)
+                seq = os.listdir(image_pack_path)
 
-            if not file_exists(sample_dump_file):
-                for pack in packs:
-                    print('\nlisting pack: {}'.format(pack))
-                    # get samples and gts
-                    image_pack_path = os.path.join(self.image_root, pack)
-                    label_pack_path = os.path.join(self.groundtruth_root, pack)
-                    seq = os.listdir(image_pack_path)
-
-                    for seq_name in tqdm(seq):
-                        image_seq_path = os.path.join(image_pack_path, seq_name)
-                        image_frames = os.listdir(image_seq_path)
-                        image_frame_paths = [os.path.join(image_seq_path, frame) for frame in image_frames]
-                        image_frame_paths.sort()
-
-                        # TODO : read w, h from first frame of this seq
-
-                        label_seq_path = os.path.join(label_pack_path, seq_name)
-                        label_frames = os.listdir(label_seq_path)
-                        label_frame_paths = [os.path.join(label_seq_path, frame) for frame in label_frames]
-                        label_frame_paths.sort()
-
-                        labels = self.parse_groundtruth(label_frame_paths)
-
-                        for i in range(len(image_frames) - (self.num_frames - 1)):
-                            sample = image_frame_paths[i:i + self.num_frames]
-                            self.samples.append(sample)
-                            self.total_len += 1
-
-                            gt = labels[i:i + self.num_frames]
-                            self.gts.append(gt)
-                        
-        elif self.phase == 'val':
-            self.image_root = os.path.join(self.root, 'Data/VID/', self.phase)
-            self.groundtruth_root = os.path.join(self.root, 'Annotations/VID/', self.phase)
-
-            self.samples = []
-            self.gts = []
-
-            sample_dump_file = os.path.join(self.root, 'dump/sample.{}.dump').format(self.phase)
-            if file_exists(sample_dump_file):
-                with open(sample_dump_file, 'rb') as file:
-                    self.samples = pickle.load(file)
-                    self.total_len = len(self.samples)
-
-            gt_dump_file = os.path.join(self.root, 'dump/gt.{}.dump').format(self.phase)
-            if file_exists(gt_dump_file):
-                with open(gt_dump_file, 'rb') as file:
-                    self.gts = pickle.load(file)
-
-            print('\nlisting val')
-            # get samples and gts
-            seq = os.listdir(self.image_root)
-
-            for seq_name in tqdm(seq):
-                if not file_exists(sample_dump_file):
-                    image_seq_path = os.path.join(self.image_root, seq_name)
+                for seq_name in tqdm(seq):
+                    # image paths
+                    image_seq_path = os.path.join(image_pack_path, seq_name)
                     image_frames = os.listdir(image_seq_path)
                     image_frame_paths = [os.path.join(image_seq_path, frame) for frame in image_frames]
                     image_frame_paths.sort()
 
-                if not file_exists(gt_dump_file):
-                    label_seq_path = os.path.join(self.groundtruth_root, seq_name)
+                    # read w, h from first frame of this seq
+                    with Image.open(image_frame_paths[0]) as image:
+                        w, h = image.size
+
+                    # label paths
+                    label_seq_path = os.path.join(label_pack_path, seq_name)
                     label_frames = os.listdir(label_seq_path)
                     label_frame_paths = [os.path.join(label_seq_path, frame) for frame in label_frames]
                     label_frame_paths.sort()
 
-                    labels = self.parse_groundtruth(label_frame_paths)
+                    # parse xml lable files
+                    labels = [self.parse_groundtruth(label_frame_path, w, h) for label_frame_path in label_frame_paths]
 
-                if not file_exists(sample_dump_file):
+                    # split seq into 3D samples
                     for i in range(len(image_frames) - (self.num_frames - 1)):
-                        sample = image_frame_paths[i:i + self.num_frames]
-                        self.samples.append(sample)
-                        self.total_len += 1
+                        images = image_frame_paths[i:i + self.num_frames]
+                        gts = labels[i:i + self.num_frames]
 
-                        if not file_exists(gt_dump_file):
-                            gt = labels[i:i + self.num_frames]
-                            self.gts.append(gt)
+                        self.samples.append((images, gts, w, h))
+
+                        self.total_len += 1
+        elif self.phase == 'val':
+            print('\nlisting pack: val')
+            # get samples and gts
+            seq = os.listdir(self.image_root)
+
+            for seq_name in tqdm(seq):
+                # image paths
+                image_seq_path = os.path.join(self.image_root, seq_name)
+                image_frames = os.listdir(image_seq_path)
+                image_frame_paths = [os.path.join(image_seq_path, frame) for frame in image_frames]
+                image_frame_paths.sort()
+
+                # read w, h from first frame of this seq
+                with Image.open(image_frame_paths[0]) as image:
+                    w, h = image.size
+
+                # label paths
+                label_seq_path = os.path.join(self.groundtruth_root, seq_name)
+                label_frames = os.listdir(label_seq_path)
+                label_frame_paths = [os.path.join(label_seq_path, frame) for frame in label_frames]
+                label_frame_paths.sort()
+
+                # parse xml lable files
+                labels = [self.parse_groundtruth(label_frame_path, w, h) for label_frame_path in label_frame_paths]
+
+                # split seq into 3D samples
+                for i in range(len(image_frames) - (self.num_frames - 1)):
+                    images = image_frame_paths[i:i + self.num_frames]
+                    gts = labels[i:i + self.num_frames]
+
+                    self.samples.append((images, gts, w, h))
+
+                    self.total_len += 1
         else:
             # TODO : test
             pass
 
     def __getitem__(self, index):
         if (self.phase == 'train') or (self.phase == 'val'):
-            sample = self.samples[index]
-            sample = [Image.open(img_path) for img_path in sample]
-            gt = self.gts[index]
+            images, gts, w, h = self.samples[index]
+
+            images = [Image.open(img_path) for img_path in images]
 
             if self.transform is not None:
-                sample, gt = self.transform((sample, gt))
+                images, gts, w, h = self.transform(images, gts, w, h)
 
-            return sample, gt
+            return images, gts, w, h
 
     def __len__(self):
         return self.total_len
@@ -266,8 +279,6 @@ class VidDataset(Dataset):
             # load class number
             className = obj.find('name').text
             classNo = self.dict[className]
-            if classNo == 31:
-                print(className, classNo)
 
             # lower-left to upper-right
             bbox = [xmin, ymin, xmax, ymax, classNo]
@@ -282,6 +293,3 @@ class VidDataset(Dataset):
 
     def get_sample(self):
         return self.samples
-
-    def get_groundtruth(self):
-        return self.gts
