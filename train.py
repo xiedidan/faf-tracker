@@ -173,7 +173,8 @@ criterion = MultiFrameBoxLoss(
     0.5,
     cfg['variance'],
     num_frames,
-    num_classes
+    num_classes,
+    device
 )
 optimizer = optim.SGD(
     faf.parameters(),
@@ -190,11 +191,13 @@ def train(epoch):
 
     for batch_index, (samples, gts) in enumerate(trainLoader):
         samples = samples.to(device)
+        for index, gt in enumerate(gts):
+            gts[index] = [frame.to(device) for frame in gt]
 
         optimizer.zero_grad()
 
         loc, conf, anchor = faf(samples)
-        loss_l, loss_c = criterion((loc.to('cpu'), conf.to('cpu'), anchor), gts)
+        loss_l, loss_c = criterion((loc.to(device), conf.to(device), anchor.to(device)), gts)
         loss = loss_l + loss_c
 
         loss.backward()

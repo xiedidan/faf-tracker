@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from ..box_utils import match, log_sum_exp
 
 class MultiFrameBoxLoss(nn.Module):
-    def __init__(self, np_ratio, overlap_threshold, variance, num_frames, num_classes):
+    def __init__(self, np_ratio, overlap_threshold, variance, num_frames, num_classes, device):
         super(MultiFrameBoxLoss, self).__init__()
         
         self.threshold = overlap_threshold
@@ -15,6 +15,7 @@ class MultiFrameBoxLoss(nn.Module):
         self.neg_pos_ratio = np_ratio
         self.num_frames = num_frames
         self.num_classes = num_classes
+        self.device = device
 
     def forward(self, predictions, targets):
         """
@@ -58,6 +59,8 @@ class MultiFrameBoxLoss(nn.Module):
                     conf_t,
                     batch * self.num_frames + frame
                 )
+        loc_t = loc_t.to(self.device)
+        conf_t = conf_t.to(self.device)
 
         conf_mask = conf_t > 0
 
