@@ -116,10 +116,13 @@ class MultiFrameBoxLoss(nn.Module):
         ).gt(0)]
 
         # Lcls
-        loss_c = F.cross_entropy(
-            conf_pred,
-            selected_targets,
-            size_average=False
-        )
+        if len(selected_targets) == 0:
+            loss_c = torch.tensor(0., device=self.device)
+        else:
+            loss_c = F.cross_entropy(
+                conf_pred,
+                selected_targets,
+                size_average=False
+            )
 
         return loss_l, loss_c

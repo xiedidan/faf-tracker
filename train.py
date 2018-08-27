@@ -234,9 +234,9 @@ def train(epoch):
 
         train_loss += loss.item()
         print('e:{}/{}, b:{}/{}, b_l:{:.2f} = l{:.2f} + c{:.2f}, e_l:{:.2f}'.format(
-            epoch,
+            epoch + 1,
             flags.end_epoch,
-            batch_index,
+            batch_index + 1,
             batch_count,
             loss.item(),
             loss_l.item(),
@@ -254,6 +254,7 @@ def val(epoch):
         faf.eval()
         val_loss = 0
         anchor = faf.anchors.to(loss_device)
+        batch_count = len(valLoader)
 
         # perfrom forward
         for batch_index, (samples, gts) in enumerate(valLoader):
@@ -270,6 +271,17 @@ def val(epoch):
             loss = loss_l + loss_c
 
             val_loss += loss.item()
+
+            print('e:{}/{}, b:{}/{}, b_l:{:.2f} = l{:.2f} + c{:.2f}, e_l:{:.2f}'.format(
+                epoch + 1,
+                flags.end_epoch,
+                batch_index + 1,
+                batch_count,
+                loss.item(),
+                loss_l.item(),
+                loss_c.item(),
+                val_loss / (batch_index + 1)
+            ))
 
         # save checkpoint
         global best_loss
