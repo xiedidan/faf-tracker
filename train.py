@@ -32,7 +32,7 @@ packs = [
 num_frames = 5
 num_classes = 31
 class_filename = 'class.mapping'
-number_workers = 0
+number_workers = 8
 
 # variables
 start_epoch = 0
@@ -188,6 +188,7 @@ def train(epoch):
 
     faf.train()
     train_loss = 0
+    anchor = faf.anchors.to(device)
 
     for batch_index, (samples, gts) in enumerate(trainLoader):
         samples = samples.to(device)
@@ -196,8 +197,12 @@ def train(epoch):
 
         optimizer.zero_grad()
 
-        loc, conf, anchor = faf(samples)
-        loss_l, loss_c = criterion((loc.to(device), conf.to(device), anchor.to(device)), gts)
+        if torch.cuda.device_count() > 1:
+            loc, conf = nn.parallel.data_parallel(faf, samples)
+        else:
+            loc, conf = faf(samples)
+
+        loss_l, loss_c = criterion((loc.to(device), conf.to(device), anchor), gts)
         loss = loss_l + loss_c
 
         loss.backward()
