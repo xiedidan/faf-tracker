@@ -23,16 +23,17 @@ from layers import MultiFrameBoxLoss
 
 # constants & configs
 packs = [
-    'ILSVRC2015_VID_train_0000',
-    'ILSVRC2015_VID_train_0001',
-    'ILSVRC2015_VID_train_0002',
-    'ILSVRC2015_VID_train_0003',
+    #'ILSVRC2015_VID_train_0000',
+    #'ILSVRC2015_VID_train_0001',
+    #'ILSVRC2015_VID_train_0002',
+    #'ILSVRC2015_VID_train_0003',
     'ILSVRC2017_VID_train_0000'
 ]
 num_frames = 5
 num_classes = 31
 class_filename = 'class.mapping'
 number_workers = 8
+snapshot_interval = 1000
 
 # variables
 start_epoch = 0
@@ -62,6 +63,24 @@ def init_weight(m):
         xavier(m.weight.data)
         m.bias.data.zero_()
 
+def snapshot(epoch, batch, loss):
+    print('Taking snapshot, loss: {}'.format(loss))
+
+    state = {
+        'net': faf.state_dict(),
+        'loss': loss,
+        'epoch': epoch,
+    }
+    
+    if not os.path.isdir('snapshot'):
+        os.mkdir('snapshot')
+
+    torch.save(state, './snapshot/e_{:0>6}_b_{:0>6}_loss_{:.5f}.pth'.format(
+        epoch,
+        batch,
+        loss
+    ))
+
 # argparser
 parser = argparse.ArgumentParser(description='FaF Training')
 parser.add_argument('--lr', default=1e-6, type=float, help='learning rate')
@@ -71,6 +90,7 @@ parser.add_argument('--resume', '-r', action='store_true', help='resume from che
 parser.add_argument('--checkpoint', default='./checkpoint/checkpoint.pth', help='checkpoint file path')
 parser.add_argument('--root', default='/media/voyager/ssd-ext4/ILSVRC/', help='dataset root path')
 parser.add_argument('--device', default='cuda:0', help='device (cuda / cpu)')
+parser.add_argument('--loss_device', default='cuda:0', help='device to calculate loss')
 flags = parser.parse_args()
 
 print('Got flags: {}'.format(flags))
@@ -79,6 +99,7 @@ if not os.path.exists(os.path.join(flags.root, 'dump/')):
     os.mkdir(os.path.join(flags.root, 'dump/'))
 
 device = torch.device(flags.device)
+loss_device = torch.device(flags.loss_device)
 
 # data loader
 size = [300, 300]
@@ -174,7 +195,7 @@ criterion = MultiFrameBoxLoss(
     cfg['variance'],
     num_frames,
     num_classes,
-    device
+    loss_device
 )
 optimizer = optim.SGD(
     faf.parameters(),
@@ -188,12 +209,13 @@ def train(epoch):
 
     faf.train()
     train_loss = 0
-    anchor = faf.anchors.to(device)
+    anchor = faf.anchors.to(loss_device)
+    batch_count = len(trainLoader)
 
     for batch_index, (samples, gts) in enumerate(trainLoader):
         samples = samples.to(device)
         for index, gt in enumerate(gts):
-            gts[index] = [frame.to(device) for frame in gt]
+            gts[index] = [frame.to(loss_device) for frame in gt]
 
         optimizer.zero_grad()
 
@@ -202,21 +224,28 @@ def train(epoch):
         else:
             loc, conf = faf(samples)
 
-        loss_l, loss_c = criterion((loc.to(device), conf.to(device), anchor), gts)
+        # offload loss to loss_device
+        loss_l, loss_c = criterion((loc.to(loss_device), conf.to(loss_device), anchor), gts)
         loss = loss_l + loss_c
+        loss = loss.to(device)
 
         loss.backward()
         optimizer.step()
 
         train_loss += loss.item()
-        print('e:{:0>5}, b:{:0>5}, b_l:{:.5f} = l{:.5f} + c{:.5f}, e_l:{:.5f}'.format(
+        print('e:{}/{}, b:{}/{}, b_l:{:.2f} = l{:.2f} + c{:.2f}, e_l:{:.2f}'.format(
             epoch,
+            flags.end_epoch,
             batch_index,
+            batch_count,
             loss.item(),
             loss_l.item(),
             loss_c.item(),
             train_loss / (batch_index + 1)
         ))
+
+        if (batch_index + 1) % snapshot_interval == 0:
+            snapshot(epoch, batch_index, train_loss / (batch_index + 1))
 
 def val(epoch):
     print('\nVal')
@@ -224,15 +253,22 @@ def val(epoch):
     with torch.no_grad():
         faf.eval()
         val_loss = 0
+        anchor = faf.anchors.to(loss_device)
 
+        # perfrom forward
         for batch_index, (samples, gts) in enumerate(valLoader):
             samples = samples.to(device)
-            gts = torch.stack([gt.to(device) for gt in gts])
+            for index, gt in enumerate(gts):
+                gts[index] = [frame.to(loss_device) for frame in gt]
 
-            output = faf(samples)
-            output[2].to(device)
- 
-            loss = criterion(output, gts)
+            if torch.cuda.device_count() > 1:
+                loc, conf = nn.parallel.data_parallel(faf, samples)
+            else:
+                loc, conf = faf(samples)
+
+            loss_l, loss_c = criterion((loc.to(loss_device), conf.to(loss_device), anchor), gts)
+            loss = loss_l + loss_c
+
             val_loss += loss.item()
 
         # save checkpoint
@@ -241,7 +277,7 @@ def val(epoch):
         if val_loss < best_loss:
             print('Saving checkpoint, best loss: {}'.format(best_loss))
             state = {
-                'net': faf.module.state_dict(),
+                'net': faf.state_dict(),
                 'loss': val_loss,
                 'epoch': epoch,
             }
