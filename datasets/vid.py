@@ -6,12 +6,19 @@ from PIL import Image
 import sys
 import os
 import pickle
+import random
+import math
 import xml.etree.ElementTree as ET
 import multiprocessing as mp
 from multiprocessing.dummy import Pool
 import numpy as np
 
 from tqdm import tqdm
+
+# fix for 'RuntimeError: received 0 items of ancdata' problem
+import resource
+rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
 
 dict_file = './words.txt'
 
@@ -61,6 +68,130 @@ def create_class_mapping(val_annotation_path='./ILSVRC/Annotations/VID/val/'):
         
     return num_classes, classDict
 
+# data augmentation
+class ColorJitter(object):
+    def __init__(self, brightness=0, contrast=0, saturation=0, hue=0):
+        self.brightness = brightness
+        self.contrast = contrast
+        self.saturation = saturation
+        self.hue = hue
+
+    def __call__(self, images, gts, w, h):
+        brightness_factor = random.uniform(max(0., 1. - self.brightness), 1. + self.brightness)
+        contrast_factor = random.uniform(max(0., 1. - self.contrast), 1. + self.contrast)
+        saturation_factor = random.uniform(max(0., 1. - self.saturation), 1. + self.saturation)
+        hue_factor = random.uniform(-1. * self.hue, self.hue)
+
+        images = [transforms.functional.adjust_brightness(image, brightness_factor) for image in images]
+        images = [transforms.functional.adjust_contrast(image, contrast_factor) for image in images]
+        images = [transforms.functional.adjust_saturation(image, saturation_factor) for image in images]
+        images = [transforms.functional.adjust_hue(image, hue_factor) for image in images]
+
+        return images, gts, w, h
+
+class RandomHorizontalFlip(object):
+    def __init__(self, p=0.5):
+        self.p = p
+
+    def __call__(self, images, gts, w, h):
+        if random.uniform(0., 1.) > self.p:
+            # filp both images and gts
+            images = [transforms.functional.hflip(image) for image in images]
+
+            for i, frame in enumerate(gts):
+                for j, bbox in enumerate(frame):
+                    gts[i][j] = [
+                        w - bbox[2],
+                        bbox[1],
+                        w - bbox[0],
+                        bbox[3],
+                        bbox[4]
+                    ]
+
+        return images, gts, w, h
+
+class RandomResizedCrop(object):
+    def __init__(self, size, scale=(0.08, 1.0), ratio=(0.75, 1.3333333333333333), interpolation=2):
+        self.size = size
+        self.scale = scale
+        self.ratio = ratio
+        self.interpolation = interpolation
+
+    def __call__(self, images, gts, w, h):
+        scale_factor = random.uniform(self.scale[0], self.scale[1])
+        ratio_factor = random.uniform(self.ratio[0], self.ratio[1])
+        
+        scaled_w, scaled_h = (w, h) * scale_factor
+        
+        original_ratio = w / h
+        if original_ratio > ratio_factor:
+            # gets taller, crop width
+            new_w = math.floor(scaled_w * (ratio_factor / original_ratio))
+            new_h = math.floor(scaled_h)
+        else:
+            # gets shorter, crop height
+            new_w = math.floor(scaled_w)
+            new_h = math.floor(scaled_h * (original_ratio / ratio_factor))
+
+        i = random.randint(0, w - new_w)
+        j = random.randint(0, h - new_h)
+
+        images = [transforms.functional.resized_crop(image, i, j, h, w, self.size, self.interpolation) for image in images]
+
+        # gt transform
+        offset = np.array([i, j, i, j, 0])
+        scale = np.array([self.size[0] / new_w, self.size[1] / new_h, self.size[0] / new_w, self.size[1] / new_h, 1])
+
+        for i, frame in enumerate(gts):
+            frame_offset = np.tile(offset, len(frame)).reshape(-1, 5)
+            frame_scale = np.tile(scale, len(frame)).reshape(-1, 5)
+
+            new_frame = (frame - frame_offset) * frame_scale
+
+            # TODO : remove dropped gt
+            gts[i] = new_frame
+
+        return images, gts, w, h
+
+class RandomResizedExpand(object):
+    def __init__(self, size, scale=(1., 1.92), ratio=(0.75, 1.3333333333333333), fill=0, padding_mode='constant'):
+        pass
+
+    def __call__(self, images, gts, w, h):
+        return images, gts, w, h
+
+class RandomSaltAndPepper(object):
+    def __init__(self, p=0.5, ratio=0.2):
+        self.p = p
+        self.ratio = ratio
+
+    def __call__(self, images, gts, w, h):
+        if random.uniform(0., 1.) > self.p:
+            ratio_factor = random.uniform(0., self.ratio)
+
+            for i, image in enumerate(images):
+                images[i] = self.salt_and_pepper(image, w, h, ratio_factor)
+
+        return images, gts, w, h
+
+    def salt_and_pepper(self, image, w, h, ratio_factor):
+        noise_count = math.floor(w * h * ratio_factor)
+
+        for i in range(noise_count):
+            x = random.randint(0, w)
+            y = random.randint(0, h)
+            noise = 0 if random.uniform(0., 1.) < 0.5 else 255
+            image[x, y, :] = noise
+
+        return image
+
+class LabelExpand(object):
+    def __init__(self):
+        pass
+
+    def __call__(self, images, gts, w, h):
+        return images, gts, w, h
+
 # mod from torchvision
 class Compose(object):
     """Composes several transforms together.
@@ -91,65 +222,52 @@ class Compose(object):
         format_string += '\n)'
         return format_string
 
-# inplace resize transform
+# resize transform
 class Resize(object):
     def __init__(self, size):
         self.size = size
-        self.image_transform = transforms.Lambda(lambda frames: [transforms.Resize(size)(frame) for frame in frames])
 
     def __call__(self, images, gts, w, h):
-        images = self.image_transform(images)
+        images = transforms.Lambda(lambda frames: [transforms.Resize(self.size)(frame) for frame in frames])(images)
 
-        for i in range(len(gts)):
-            gt = gts[i]
-            for j in range(len(gt)):
-                bbox = gt[j]
+        w_ratio = float(self.size[0]) / w
+        h_ratio = float(self.size[1]) / h
+        ratio = np.array([w_ratio, h_ratio, w_ratio, h_ratio, 1.], dtype=np.float32)
 
-                w_ratio = float(self.size[0]) / w
-                h_ratio = float(self.size[1]) / h
+        for i, frame in enumerate(gts):
+            frame_ratio = np.tile(ratio, len(frame)).reshape(-1, 5)
+            new_frame = frame * frame_ratio
 
-                bbox = [
-                    bbox[0] * w_ratio,
-                    bbox[1] * h_ratio,
-                    bbox[2] * w_ratio,
-                    bbox[3] * h_ratio,
-                    bbox[4]
-                ]
-                gt[j] = bbox
-            gts[i] = gt
-
+            gts[i] = new_frame
+        
         return images, gts, w, h
 
-# inplace convert gt to percentage format
+# convert gt to percentage format
 class Percentage(object):
     def __init__(self, size):
         self.size = size
 
     def __call__(self, images, gts, w, h):
+        scale = np.array([self.size[0], self.size[1], self.size[0], self.size[1], 1], dtype=np.float32)
+
         for frame_index, frame in enumerate(gts):
-            for bbox_index, bbox in enumerate(frame):
-                bbox = [
-                    bbox[0] / self.size[0],
-                    bbox[1] / self.size[1],
-                    bbox[2] / self.size[0],
-                    bbox[3] / self.size[1],
-                    bbox[4]
-                ]
-                
-                gts[frame_index][bbox_index] = bbox
+            frame_scale = np.tile(scale, len(frame)).reshape(-1, 5)
+            scaled_frame = frame / frame_scale
+
+            gts[frame_index] = scaled_frame
 
         return images, gts, w, h
 
 # ToTensor wrapper
 class ToTensor(object):
     def __init__(self):
-        self.image_transform = transforms.Lambda(lambda frames: torch.stack([transforms.ToTensor()(frame) for frame in frames]))
+        pass
 
     def __call__(self, images, gts, w, h):
         # TODO : image channel swapping?
-        images = self.image_transform(images)
-        gts = [torch.Tensor(frame) for frame in gts]
-            
+        images = transforms.Lambda(lambda frames: torch.stack([transforms.ToTensor()(frame) for frame in frames]))(images)
+        gts = [torch.as_tensor(frame, dtype=torch.float32) for frame in gts]
+
         return images, gts, w, h
 
 class VidDataset(Dataset):
@@ -208,7 +326,9 @@ class VidDataset(Dataset):
                     # split seq into 3D samples
                     for i in range(len(image_frames) - (self.num_frames - 1)):
                         images = image_frame_paths[i:i + self.num_frames]
-                        gts = labels[i:i + self.num_frames]
+
+                        frame_labels = labels[i:i + self.num_frames]
+                        gts = [np.array(frame, dtype=np.float32) for frame in frame_labels]
 
                         self.samples.append((images, gts, w, h))
 
@@ -241,25 +361,49 @@ class VidDataset(Dataset):
                 # split seq into 3D samples
                 for i in range(len(image_frames) - (self.num_frames - 1)):
                     images = image_frame_paths[i:i + self.num_frames]
-                    gts = labels[i:i + self.num_frames]
+
+                    frame_labels = labels[i:i + self.num_frames]
+                    gts = [np.array(frame, dtype=np.float32) for frame in frame_labels]
 
                     self.samples.append((images, gts, w, h))
 
                     self.total_len += 1
         else:
-            # TODO : test
-            pass
+            # test has no groundtruth
+            print('\nlisting pack: test')
+            seq = os.listdir(self.image_root)
+
+            for seq_name in tqdm(seq):
+                # image paths
+                image_seq_path = os.path.join(self.image_root, seq_name)
+                image_frames = os.listdir(image_seq_path)
+                image_frame_paths = [os.path.join(image_seq_path, frame) for frame in image_frames]
+                image_frame_paths.sort()
+
+                # read w, h from first frame of this seq
+                with Image.open(image_frame_paths[0]) as image:
+                    w, h = image.size
+
+                # split seq into 3D samples
+                for i in range(len(image_frames) - (self.num_frames - 1)):
+                    images = image_frame_paths[i:i + self.num_frames]
+                    gts = []
+
+                    # create background gts just for transformation
+                    for j in range(self.num_frames):
+                        gts.append([np.array([0, 0, w, h, 0], dtype=np.float32)])
+                    
+                    self.samples.append((images, gts, w, h))
+                    self.total_len += 1
 
     def __getitem__(self, index):
-        if (self.phase == 'train') or (self.phase == 'val'):
-            images, gts, w, h = self.samples[index]
+        images, gts, w, h = self.samples[index]
+        images = [Image.open(img_path) for img_path in images]
 
-            images = [Image.open(img_path) for img_path in images]
+        if self.transform is not None:
+            images, gts, w, h = self.transform(images, gts, w, h)
 
-            if self.transform is not None:
-                images, gts, w, h = self.transform(images, gts, w, h)
-
-            return images, gts, w, h
+        return images, gts, w, h
 
     def __len__(self):
         return self.total_len

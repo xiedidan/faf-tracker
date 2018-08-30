@@ -26,25 +26,19 @@ packs=[
 ]
 
 size = [300, 300]
-transform = transforms.Compose([
+transform = Compose([
     Resize(size=size),
-    ToTensor(),
+    Percentage(size=size),
+    ToTensor()
 ])
 
 # helper
-def file_exists(path):
-    try:
-        with open(path) as f:
-            return True
-    except IOError:
-        return False
-
 def collate(batch):
     # batch = [(image, gt), (image, gt), ...]
     images = []
     gts = []
     for i, sample in enumerate(batch):
-        image, gt = sample
+        image, gt, w, h = sample
         
         images.append(image)
         gts.append(gt)
@@ -153,4 +147,5 @@ if __name__ == '__main__':
 
     if flags.plot:
         for samples, gts in tqdm(trainLoader):
+            print(gts)
             plot_batch((samples, gts))

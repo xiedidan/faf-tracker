@@ -23,10 +23,10 @@ from layers import MultiFrameBoxLoss
 
 # constants & configs
 packs = [
-    #'ILSVRC2015_VID_train_0000',
-    #'ILSVRC2015_VID_train_0001',
-    #'ILSVRC2015_VID_train_0002',
-    #'ILSVRC2015_VID_train_0003',
+    'ILSVRC2015_VID_train_0000',
+    'ILSVRC2015_VID_train_0001',
+    'ILSVRC2015_VID_train_0002',
+    'ILSVRC2015_VID_train_0003',
     'ILSVRC2017_VID_train_0000'
 ]
 num_frames = 5
