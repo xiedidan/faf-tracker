@@ -99,14 +99,21 @@ class RandomHorizontalFlip(object):
             images = [transforms.functional.hflip(image) for image in images]
 
             for i, frame in enumerate(gts):
+                new_frame = []
+
                 for j, bbox in enumerate(frame):
-                    gts[i][j] = [
+                    new_bbox = [
                         w - bbox[2],
                         bbox[1],
                         w - bbox[0],
                         bbox[3],
                         bbox[4]
                     ]
+
+                    new_frame.append(new_bbox)
+
+                new_frame = np.array(new_frame, dtype=np.float32)
+                gts[i] = new_frame
 
         return images, gts, w, h
 
