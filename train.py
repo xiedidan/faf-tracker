@@ -103,7 +103,17 @@ loss_device = torch.device(flags.loss_device)
 
 # data loader
 size = [300, 300]
-transform = Compose([
+
+trainTransform = Compose([
+    RandomResizedCrop(size=size, p=1., scale=(0.5, 1.), ratio=(0.1, 10)),
+    RandomSaltAndPepper(size=size),
+    ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25, hue=0.1),
+    RandomHorizontalFlip(size=size, p=0.99),
+    Percentage(size=size),
+    ToTensor()
+])
+
+valTransform = Compose([
     Resize(size=size),
     Percentage(size=size),
     ToTensor(),
@@ -126,7 +136,7 @@ trainSet = VidDataset(
     root=flags.root,
     packs=packs,
     phase='train',
-    transform=transform,
+    transform=trainTransform,
     classDict=classMapping,
     num_classes=num_classes
 )
@@ -142,7 +152,7 @@ valSet = VidDataset(
     root=flags.root,
     packs=packs,
     phase='val',
-    transform=transform,
+    transform=valTransform,
     classDict=classMapping,
     num_classes=num_classes
 )

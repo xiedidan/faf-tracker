@@ -23,6 +23,39 @@ resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
 dict_file = './words.txt'
 
 # helper
+def intersect(box_a, box_b):
+    max_xy = np.minimum(box_a[:, 2:], box_b[2:])
+    min_xy = np.maximum(box_a[:, :2], box_b[:2])
+    inter = np.clip((max_xy - min_xy), a_min=0, a_max=np.inf)
+    return inter[:, 0] * inter[:, 1]
+
+def overlap_numpy(box_a, box_b):
+    # compute A ∩ B / A
+    inter = intersect(box_a, box_b)
+    area_a = ((box_a[:, 2]-box_a[:, 0]) *
+              (box_a[:, 3]-box_a[:, 1]))
+    
+    return inter / area_a
+
+def jaccard_numpy(box_a, box_b):
+    """Compute the jaccard overlap of two sets of boxes.  The jaccard overlap
+    is simply the intersection over union of two boxes.
+    E.g.:
+        A ∩ B / A ∪ B = A ∩ B / (area(A) + area(B) - A ∩ B)
+    Args:
+        box_a: Multiple bounding boxes, Shape: [num_boxes,4]
+        box_b: Single bounding box, Shape: [4]
+    Return:
+        jaccard overlap: Shape: [box_a.shape[0], box_a.shape[1]]
+    """
+    inter = intersect(box_a, box_b)
+    area_a = ((box_a[:, 2]-box_a[:, 0]) *
+              (box_a[:, 3]-box_a[:, 1]))  # [A,B]
+    area_b = ((box_b[2]-box_b[0]) *
+              (box_b[3]-box_b[1]))  # [A,B]
+    union = area_a + area_b - inter
+    return inter / union  # [A,B]
+
 def file_exists(path):
     try:
         with open(path) as f:
@@ -90,11 +123,12 @@ class ColorJitter(object):
         return images, gts, w, h
 
 class RandomHorizontalFlip(object):
-    def __init__(self, p=0.5):
+    def __init__(self, size, p=0.5):
+        self.size = size
         self.p = p
 
     def __call__(self, images, gts, w, h):
-        if random.uniform(0., 1.) > self.p:
+        if random.uniform(0., 1.) < self.p:
             # filp both images and gts
             images = [transforms.functional.hflip(image) for image in images]
 
@@ -103,9 +137,9 @@ class RandomHorizontalFlip(object):
 
                 for j, bbox in enumerate(frame):
                     new_bbox = [
-                        w - bbox[2],
+                        self.size[0] - bbox[2],
                         bbox[1],
-                        w - bbox[0],
+                        self.size[0] - bbox[0],
                         bbox[3],
                         bbox[4]
                     ]
@@ -118,86 +152,111 @@ class RandomHorizontalFlip(object):
         return images, gts, w, h
 
 class RandomResizedCrop(object):
-    def __init__(self, size, scale=(0.08, 1.0), ratio=(0.75, 1.3333333333333333), interpolation=2):
+    def __init__(self, size, p=0.5, scale=(0.08, 1.0), ratio=(0.75, 1.3333333333333333), interpolation=2, threshold=0.5):
         self.size = size
+        self.p = p
         self.scale = scale
         self.ratio = ratio
         self.interpolation = interpolation
+        self.threshold = threshold
+
+    @staticmethod
+    def get_params(w, h, scale, ratio):
+        for attempt in range(10):
+            scale_factor = random.uniform(*scale)
+            ratio_factor = random.uniform(*ratio)
+            
+            target_area = w * h * scale_factor
+            new_w = int(round(math.sqrt(target_area * ratio_factor)))
+            new_h = int(round(math.sqrt(target_area / ratio_factor)))
+
+            if random.random() < 0.5:
+                new_w, new_h = new_h, new_w
+
+            if new_w < w and new_h < h:
+                i = random.randint(0, h - new_h)
+                j = random.randint(0, w - new_w)
+
+                return i, j, h, w
+
+        # fallback
+        new_w = min(w, h)
+        i = (h - new_w) // 2
+        j = (w - new_w) // 2
+
+        return i, j, new_w, new_w
 
     def __call__(self, images, gts, w, h):
-        scale_factor = random.uniform(self.scale[0], self.scale[1])
-        ratio_factor = random.uniform(self.ratio[0], self.ratio[1])
-        
-        scaled_w, scaled_h = (w, h) * scale_factor
-        
-        original_ratio = w / h
-        if original_ratio > ratio_factor:
-            # gets taller, crop width
-            new_w = math.floor(scaled_w * (ratio_factor / original_ratio))
-            new_h = math.floor(scaled_h)
+        if random.uniform(0., 1.) < self.p:
+            i, j, new_h, new_w = self.get_params(w, h, self.scale, self.ratio)
+            images = [transforms.functional.resized_crop(image, i, j, new_h, new_w, self.size, self.interpolation) for image in images]
+
+            # gt transform
+            offset = np.array([j, i, j, i, 0])
+            scale = np.array([self.size[0] / new_w, self.size[1] / new_h, self.size[0] / new_w, self.size[1] / new_h, 1])
+
+            new_fullframe = np.array([0, 0, self.size[0], self.size[1]])
+
+            for i, frame in enumerate(gts):
+                new_frame = (frame - offset) * scale
+
+                # remove bbox out of the frame
+                inside_mask = overlap_numpy(new_frame[:, :4], new_fullframe) - self.threshold
+                inside_mask = inside_mask > 0.
+
+                cleared_frame = np.compress(inside_mask, new_frame, axis=0)
+
+                if len(cleared_frame) == 0:
+                    cleared_frame = np.array([[0., 0., self.size[0], self.size[1], 0.]], dtype=float)
+
+                # clip into the frame
+                cleared_frame = cleared_frame.reshape(5, -1)
+                np.clip(cleared_frame[0], 0., self.size[0], out=cleared_frame[0])
+                np.clip(cleared_frame[2], 0., self.size[0], out=cleared_frame[2])
+                np.clip(cleared_frame[1], 0., self.size[1], out=cleared_frame[1])
+                np.clip(cleared_frame[3], 0., self.size[1], out=cleared_frame[3])
+                cleared_frame = cleared_frame.reshape(-1, 5)
+
+                gts[i] = cleared_frame
         else:
-            # gets shorter, crop height
-            new_w = math.floor(scaled_w)
-            new_h = math.floor(scaled_h * (original_ratio / ratio_factor))
+            # fall back to simple resize
+            images = transforms.Lambda(lambda frames: [transforms.Resize(self.size)(frame) for frame in frames])(images)
 
-        i = random.randint(0, w - new_w)
-        j = random.randint(0, h - new_h)
+            w_ratio = float(self.size[0]) / w
+            h_ratio = float(self.size[1]) / h
+            ratio = np.array([w_ratio, h_ratio, w_ratio, h_ratio, 1.], dtype=np.float32)
 
-        images = [transforms.functional.resized_crop(image, i, j, h, w, self.size, self.interpolation) for image in images]
+            for i, frame in enumerate(gts):
+                new_frame = frame * ratio
 
-        # gt transform
-        offset = np.array([i, j, i, j, 0])
-        scale = np.array([self.size[0] / new_w, self.size[1] / new_h, self.size[0] / new_w, self.size[1] / new_h, 1])
+                gts[i] = new_frame
 
-        for i, frame in enumerate(gts):
-            frame_offset = np.tile(offset, len(frame)).reshape(-1, 5)
-            frame_scale = np.tile(scale, len(frame)).reshape(-1, 5)
-
-            new_frame = (frame - frame_offset) * frame_scale
-
-            # TODO : remove dropped gt
-            gts[i] = new_frame
-
-        return images, gts, w, h
-
-class RandomResizedExpand(object):
-    def __init__(self, size, scale=(1., 1.92), ratio=(0.75, 1.3333333333333333), fill=0, padding_mode='constant'):
-        pass
-
-    def __call__(self, images, gts, w, h):
         return images, gts, w, h
 
 class RandomSaltAndPepper(object):
-    def __init__(self, p=0.5, ratio=0.2):
+    def __init__(self, size, p=0.5, ratio=0.05):
+        self.size = size
         self.p = p
         self.ratio = ratio
 
     def __call__(self, images, gts, w, h):
-        if random.uniform(0., 1.) > self.p:
+        if random.uniform(0., 1.) < self.p:
             ratio_factor = random.uniform(0., self.ratio)
-
-            for i, image in enumerate(images):
-                images[i] = self.salt_and_pepper(image, w, h, ratio_factor)
+            images = [self.salt_and_pepper(image, self.size[0], self.size[1], ratio_factor) for image in images]
 
         return images, gts, w, h
 
     def salt_and_pepper(self, image, w, h, ratio_factor):
         noise_count = math.floor(w * h * ratio_factor)
+        np_image = np.array(image)
 
         for i in range(noise_count):
-            x = random.randint(0, w)
-            y = random.randint(0, h)
+            x = random.randint(0, w - 1)
+            y = random.randint(0, h - 1)
             noise = 0 if random.uniform(0., 1.) < 0.5 else 255
-            image[x, y, :] = noise
+            np_image[y, x, :] = noise
 
-        return image
-
-class LabelExpand(object):
-    def __init__(self):
-        pass
-
-    def __call__(self, images, gts, w, h):
-        return images, gts, w, h
+        return transforms.functional.to_pil_image(np_image)
 
 # mod from torchvision
 class Compose(object):
@@ -242,8 +301,7 @@ class Resize(object):
         ratio = np.array([w_ratio, h_ratio, w_ratio, h_ratio, 1.], dtype=np.float32)
 
         for i, frame in enumerate(gts):
-            frame_ratio = np.tile(ratio, len(frame)).reshape(-1, 5)
-            new_frame = frame * frame_ratio
+            new_frame = frame * ratio
 
             gts[i] = new_frame
         
@@ -258,8 +316,7 @@ class Percentage(object):
         scale = np.array([self.size[0], self.size[1], self.size[0], self.size[1], 1], dtype=np.float32)
 
         for frame_index, frame in enumerate(gts):
-            frame_scale = np.tile(scale, len(frame)).reshape(-1, 5)
-            scaled_frame = frame / frame_scale
+            scaled_frame = frame / scale
 
             gts[frame_index] = scaled_frame
 

@@ -27,7 +27,11 @@ packs=[
 
 size = [300, 300]
 transform = Compose([
-    Resize(size=size),
+    # Resize(size=size),
+    RandomResizedCrop(size=size, p=1., scale=(0.5, 1.), ratio=(0.1, 10)),
+    RandomSaltAndPepper(size=size),
+    ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25, hue=0.1),
+    RandomHorizontalFlip(size=size, p=0.99),
     Percentage(size=size),
     ToTensor()
 ])
@@ -133,19 +137,16 @@ if __name__ == '__main__':
         collate_fn=collate,
     )
 
-    print('Dumping snapshots...')
-
     # snapshot
     if flags.snapshot:
+        print('Dumping snapshots...')
         train_samples = trainSet.get_sample()
         serialize(os.path.join(flags.root, 'dump/', sample_prefix).format('train'), train_samples)
         val_samples = valSet.get_sample()
         serialize(os.path.join(flags.root, 'dump/', sample_prefix).format('val'), val_samples)
 
     # plot
-    print('Plotting batches...')
-
     if flags.plot:
+        print('Plotting batches...')
         for samples, gts in tqdm(trainLoader):
-            print(gts)
             plot_batch((samples, gts))
