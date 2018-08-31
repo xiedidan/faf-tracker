@@ -105,10 +105,10 @@ loss_device = torch.device(flags.loss_device)
 size = [300, 300]
 
 trainTransform = Compose([
-    RandomResizedCrop(size=size, p=1., scale=(0.5, 1.), ratio=(0.1, 10)),
+    RandomResizedCrop(size=size, p=0.5, scale=(0.7, 1.), ratio=(2/3, 1.5)),
     RandomSaltAndPepper(size=size),
     ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25, hue=0.1),
-    RandomHorizontalFlip(size=size, p=0.99),
+    RandomHorizontalFlip(size=size, p=0.5),
     Percentage(size=size),
     ToTensor()
 ])
